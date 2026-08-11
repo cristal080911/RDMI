@@ -1,0 +1,6 @@
+{
+  "name": "Sistema de Mantenimiento Institucional",
+  "description": "Plataforma de gestión y seguimiento de mantenimientos eléctricos, estructurales y de recursos para docentes, administrativos y directivos con arquitectura hexagonal.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
