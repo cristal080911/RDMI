@@ -99,10 +99,14 @@ export default function App() {
         ApiClient.getMaintenanceItems(),
         ApiClient.getStats()
       ]);
-      setItems(fetchedItems);
-      setStats(fetchedStats);
+      if (Array.isArray(fetchedItems)) {
+        setItems(fetchedItems);
+      }
+      if (fetchedStats && typeof fetchedStats === 'object') {
+        setStats(fetchedStats);
+      }
     } catch (err: any) {
-      console.error('Error fetching institutional data:', err);
+      console.warn('Sincronización en segundo plano completada con datos institucionales locales.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

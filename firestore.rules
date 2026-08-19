@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read/write for institutional maintenance system users
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    
+    match /maintenance_items/{itemId} {
+      allow read, write: if true;
+    }
+    
+    match /advances/{advanceId} {
+      allow read, write: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

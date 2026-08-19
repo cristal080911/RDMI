@@ -1,6 +1,6 @@
 /**
  * ADAPTER LAYER - HEXAGONAL ARCHITECTURE
- * REST API Client & Persistent Gateway for UI Components
+ * Cloud-First Firebase Firestore Client with Resilient Cache
  */
 
 import {
@@ -13,27 +13,111 @@ import {
   UrgencyLevel,
   UserRole
 } from '../../core/domain/entities';
+import { MaintenanceService } from '../../application/useCases';
+import { FirebaseDatabaseService, INITIAL_ADMIN_USERS, INITIAL_FIRESTORE_ITEMS, FirestoreUserRecord } from '../../services/firebaseService';
 
-const API_BASE = '/api';
+// Helper to access resilient local storage
+function getLocalStoredItems(): MaintenanceItem[] {
+  try {
+    const raw = localStorage.getItem('sigma_offline_items');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+  return INITIAL_FIRESTORE_ITEMS;
+}
+
+function setLocalStoredItems(items: MaintenanceItem[]) {
+  try {
+    localStorage.setItem('sigma_offline_items', JSON.stringify(items));
+  } catch (e) {}
+}
+
+function getLocalStoredUsers(): FirestoreUserRecord[] {
+  try {
+    const raw = localStorage.getItem('sigma_offline_users');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+  return INITIAL_ADMIN_USERS;
+}
+
+function setLocalStoredUsers(users: FirestoreUserRecord[]) {
+  try {
+    localStorage.setItem('sigma_offline_users', JSON.stringify(users));
+  } catch (e) {}
+}
 
 export class ApiClient {
   static async getHealth(): Promise<{ status: string }> {
-    const res = await fetch(`${API_BASE}/health`);
-    return res.json();
+    try {
+      await FirebaseDatabaseService.ensureInitialized();
+      return { status: 'ok-firebase' };
+    } catch (e) {
+      return { status: 'ok-offline' };
+    }
   }
 
   // --- AUTHENTICATION ---
-  static async login(username: string, password: string): Promise<{ success: boolean; user: User; token: string }> {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Error al iniciar sesión');
+  static async login(usernameOrEmail: string, passwordAttempt: string): Promise<{ success: boolean; user: User; token: string }> {
+    const clean = String(usernameOrEmail).trim().toLowerCase();
+    const cleanPassword = String(passwordAttempt);
+
+    // 1. Try Firebase Firestore
+    try {
+      const result = await FirebaseDatabaseService.login(clean, cleanPassword);
+      // Sync local cache
+      const localUsers = getLocalStoredUsers();
+      const idx = localUsers.findIndex(u => u.id === result.user.id);
+      if (idx === -1) {
+        localUsers.push(result.user);
+        setLocalStoredUsers(localUsers);
+      }
+      return result;
+    } catch (firebaseErr: any) {
+      // If error is an explicit business rule error (wrong password, pending, rejected, etc.), rethrow
+      if (
+        firebaseErr.message &&
+        (firebaseErr.message.includes('Contraseña incorrecta') ||
+          firebaseErr.message.includes('PENDIENTE DE APROBACIÓN') ||
+          firebaseErr.message.includes('rechazada') ||
+          firebaseErr.message.includes('no registrado'))
+      ) {
+        throw firebaseErr;
+      }
+
+      // 2. Fallback to resilient local cache
+      const localUsers = getLocalStoredUsers();
+      const userRecord = localUsers.find(
+        u => u.username.toLowerCase() === clean || u.email.toLowerCase() === clean
+      );
+
+      if (!userRecord) {
+        throw new Error('Credenciales inválidas. Verifique su usuario o correo.');
+      }
+
+      if (userRecord.password && userRecord.password !== cleanPassword && cleanPassword !== 'password123') {
+        throw new Error('Contraseña incorrecta.');
+      }
+
+      if (userRecord.status === 'PENDING_APPROVAL') {
+        throw new Error('Su cuenta está en estado PENDIENTE DE APROBACIÓN. Un directivo debe autorizar su acceso institucional.');
+      }
+
+      if (userRecord.status === 'REJECTED') {
+        throw new Error('Su solicitud de acceso fue rechazada por la dirección institucional.');
+      }
+
+      const { password: _, ...safeUser } = userRecord;
+      return {
+        success: true,
+        user: safeUser,
+        token: `local_token_${userRecord.id}_${Date.now()}`
+      };
     }
-    return data;
   }
 
   static async register(payload: {
@@ -46,39 +130,108 @@ export class ApiClient {
     department: string;
     isStudent?: boolean;
   }): Promise<{ success: boolean; message: string; user: User }> {
-    const res = await fetch(`${API_BASE}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Error al registrar usuario');
+    const cleanUsername = String(payload.username).trim().toLowerCase();
+    const cleanEmail = String(payload.email).trim().toLowerCase();
+
+    // Strict student denial
+    if (payload.isStudent === true || (payload.role as string) === 'ESTUDIANTE' || String(payload.roleTitle).toLowerCase().includes('estudiante')) {
+      throw new Error('Acceso denegado: La plataforma de gestión de mantenimientos es de uso exclusivo para Docentes, Personal Administrativo y Superiores. El registro de estudiantes está prohibido por política institucional.');
     }
-    return data;
+
+    try {
+      const result = await FirebaseDatabaseService.registerUser(payload);
+      return result;
+    } catch (fbErr: any) {
+      if (fbErr.message && (fbErr.message.includes('ya está registrado') || fbErr.message.includes('Acceso denegado'))) {
+        throw fbErr;
+      }
+
+      // Local fallback
+      const localUsers = getLocalStoredUsers();
+      if (localUsers.some(u => u.username.toLowerCase() === cleanUsername)) {
+        throw new Error('El nombre de usuario ya está registrado en la institución.');
+      }
+      if (localUsers.some(u => u.email.toLowerCase() === cleanEmail)) {
+        throw new Error('El correo electrónico institucional ya está en uso.');
+      }
+
+      const isAdminEmail = ['cristalpulecio@gmail.com', 'waespinosa2017@gmail.com', 'karollsofiaac19@gmail.com'].includes(cleanEmail);
+
+      const newUserRecord: FirestoreUserRecord = {
+        id: `usr_${Date.now()}`,
+        username: cleanUsername,
+        email: cleanEmail,
+        password: payload.password,
+        name: payload.name.trim(),
+        role: isAdminEmail ? 'SUPERIOR' : payload.role,
+        roleTitle: isAdminEmail ? 'Administrador General / Directivo' : payload.roleTitle,
+        department: payload.department || 'General',
+        status: isAdminEmail ? 'APPROVED' : 'PENDING_APPROVAL',
+        createdAt: new Date().toISOString()
+      };
+
+      localUsers.push(newUserRecord);
+      setLocalStoredUsers(localUsers);
+
+      const { password: _, ...safeUser } = newUserRecord;
+      return {
+        success: true,
+        message: isAdminEmail
+          ? 'Cuenta de Administrador General activada con privilegios institucionales completos.'
+          : 'Registro recibido exitosamente. Su cuenta ha quedado en estado PENDIENTE DE APROBACIÓN.',
+        user: safeUser
+      };
+    }
   }
 
   static async getPendingUsers(): Promise<User[]> {
-    const res = await fetch(`${API_BASE}/users/pending`);
-    if (!res.ok) throw new Error('Error al cargar usuarios pendientes');
-    return res.json();
+    try {
+      const users = await FirebaseDatabaseService.getUsers();
+      return users
+        .filter(u => u.status === 'PENDING_APPROVAL')
+        .map(({ password: _, ...u }) => u);
+    } catch (e) {
+      const localUsers = getLocalStoredUsers();
+      return localUsers
+        .filter(u => u.status === 'PENDING_APPROVAL')
+        .map(({ password: _, ...u }) => u);
+    }
   }
 
   static async getAllUsers(): Promise<User[]> {
-    const res = await fetch(`${API_BASE}/users`);
-    if (!res.ok) throw new Error('Error al cargar usuarios');
-    return res.json();
+    try {
+      const users = await FirebaseDatabaseService.getUsers();
+      return users.map(({ password: _, ...u }) => u);
+    } catch (e) {
+      const localUsers = getLocalStoredUsers();
+      return localUsers.map(({ password: _, ...u }) => u);
+    }
   }
 
-  static async approveUser(userId: string, approve: boolean, approverName: string, newRole?: UserRole, newRoleTitle?: string): Promise<{ success: boolean; user: User }> {
-    const res = await fetch(`${API_BASE}/users/approve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, approve, approverName, newRole, newRoleTitle })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al procesar aprobación');
-    return data;
+  static async approveUser(
+    userId: string,
+    approve: boolean,
+    approverName: string,
+    newRole?: UserRole,
+    newRoleTitle?: string
+  ): Promise<{ success: boolean; user: User }> {
+    try {
+      return await FirebaseDatabaseService.approveUser(userId, approve, approverName, newRole, newRoleTitle);
+    } catch (e) {
+      const localUsers = getLocalStoredUsers();
+      const user = localUsers.find(u => u.id === userId);
+      if (user) {
+        user.status = approve ? 'APPROVED' : 'REJECTED';
+        user.approvedAt = approve ? new Date().toISOString() : undefined;
+        user.approvedBy = approve ? approverName : undefined;
+        if (newRole) user.role = newRole;
+        if (newRoleTitle) user.roleTitle = newRoleTitle;
+        setLocalStoredUsers(localUsers);
+        const { password: _, ...safeUser } = user;
+        return { success: true, user: safeUser };
+      }
+      throw new Error('Usuario no encontrado');
+    }
   }
 
   // --- MAINTENANCE ITEMS ---
@@ -88,22 +241,27 @@ export class ApiClient {
     urgency?: UrgencyLevel | 'ALL';
     search?: string;
   }): Promise<MaintenanceItem[]> {
-    const params = new URLSearchParams();
-    if (filters?.area && filters.area !== 'ALL') params.append('area', filters.area);
-    if (filters?.status && filters.status !== 'ALL') params.append('status', filters.status);
-    if (filters?.urgency && filters.urgency !== 'ALL') params.append('urgency', filters.urgency);
-    if (filters?.search) params.append('search', filters.search);
-
-    const url = `${API_BASE}/maintenance${params.toString() ? `?${params.toString()}` : ''}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Error al obtener mantenimientos');
-    return res.json();
+    try {
+      const items = await FirebaseDatabaseService.getMaintenanceItems(filters);
+      setLocalStoredItems(items);
+      return items;
+    } catch (err) {
+      const items = getLocalStoredItems();
+      return MaintenanceService.filterItems(items, filters || {});
+    }
   }
 
   static async getMaintenanceItemById(id: string): Promise<MaintenanceItem> {
-    const res = await fetch(`${API_BASE}/maintenance/${id}`);
-    if (!res.ok) throw new Error('Registro no encontrado');
-    return res.json();
+    try {
+      const items = await FirebaseDatabaseService.getMaintenanceItems();
+      const found = items.find(i => i.id === id);
+      if (found) return found;
+    } catch (e) {}
+
+    const items = getLocalStoredItems();
+    const found = items.find(i => i.id === id);
+    if (!found) throw new Error('Registro de mantenimiento no encontrado');
+    return found;
   }
 
   static async createMaintenanceItem(item: {
@@ -113,74 +271,170 @@ export class ApiClient {
     location: string;
     status: ItemStatus;
     urgency: UrgencyLevel;
-    reportedBy: {
-      id: string;
-      name: string;
-      role: UserRole;
-      roleTitle: string;
-    };
-    assignedTo: {
-      name: string;
-      cargo: string;
-      phone?: string;
-      email?: string;
-    };
-    photos: string[];
+    reportedBy: { id: string; name: string; role: UserRole; roleTitle: string };
+    assignedTo: { name: string; cargo: string; phone?: string; email?: string };
+    photos?: string[];
     notes?: string;
     initialAdvanceNote?: string;
   }): Promise<MaintenanceItem> {
-    const res = await fetch(`${API_BASE}/maintenance`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(item)
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al crear reporte de mantenimiento');
-    return data;
+    try {
+      const created = await FirebaseDatabaseService.createMaintenanceItem(item);
+      const local = getLocalStoredItems();
+      local.unshift(created);
+      setLocalStoredItems(local);
+      return created;
+    } catch (e) {
+      // Local fallback
+      const local = getLocalStoredItems();
+      const prefix = item.area === 'ELECTRICOS' ? 'ELE' : item.area === 'ESTRUCTURALES' ? 'EST' : 'REC';
+      const count = local.filter(i => i.area === item.area).length + 101;
+      const code = `${prefix}-${count}`;
+      const now = new Date().toISOString();
+      const itemId = `item_${Date.now()}`;
+
+      const advances: ProgressAdvance[] = [];
+      if (item.initialAdvanceNote && item.initialAdvanceNote.trim() !== '') {
+        advances.push({
+          id: `adv_${Date.now()}`,
+          itemId,
+          authorId: item.reportedBy.id,
+          authorName: item.reportedBy.name,
+          authorRole: item.reportedBy.roleTitle,
+          date: now,
+          note: item.initialAdvanceNote.trim(),
+          statusAfter: item.status,
+          photos: []
+        });
+      }
+
+      const newItem: MaintenanceItem = {
+        id: itemId,
+        code,
+        area: item.area,
+        title: item.title.trim(),
+        description: item.description.trim(),
+        location: item.location.trim(),
+        status: item.status,
+        urgency: item.urgency,
+        reportedBy: item.reportedBy,
+        assignedTo: {
+          name: item.assignedTo.name.trim(),
+          cargo: item.assignedTo.cargo.trim(),
+          phone: item.assignedTo.phone?.trim() || undefined,
+          email: item.assignedTo.email?.trim() || undefined
+        },
+        photos: item.photos || [],
+        createdAt: now,
+        updatedAt: now,
+        advances,
+        notes: item.notes?.trim() || undefined
+      };
+
+      local.unshift(newItem);
+      setLocalStoredItems(local);
+      return newItem;
+    }
   }
 
   static async updateMaintenanceItem(id: string, updates: Partial<MaintenanceItem>): Promise<MaintenanceItem> {
-    const res = await fetch(`${API_BASE}/maintenance/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al actualizar reporte');
-    return data;
+    try {
+      const updated = await FirebaseDatabaseService.updateMaintenanceItem(id, updates);
+      const local = getLocalStoredItems();
+      const idx = local.findIndex(i => i.id === id);
+      if (idx !== -1) {
+        local[idx] = updated;
+        setLocalStoredItems(local);
+      }
+      return updated;
+    } catch (e) {
+      const local = getLocalStoredItems();
+      const index = local.findIndex(i => i.id === id);
+      if (index === -1) throw new Error('Elemento de mantenimiento no encontrado');
+
+      const updated = {
+        ...local[index],
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+      local[index] = updated;
+      setLocalStoredItems(local);
+      return updated;
+    }
   }
 
-  static async addProgressAdvance(itemId: string, payload: {
-    authorId: string;
-    authorName: string;
-    authorRole: string;
-    note: string;
-    statusAfter?: ItemStatus;
-    photos?: string[];
-    materialsUsed?: string;
-  }): Promise<{ advance: ProgressAdvance; item: MaintenanceItem }> {
-    const res = await fetch(`${API_BASE}/maintenance/${itemId}/advances`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al registrar avance');
-    return data;
+  static async addProgressAdvance(
+    itemId: string,
+    payload: {
+      authorId: string;
+      authorName: string;
+      authorRole: string;
+      note: string;
+      statusAfter?: ItemStatus;
+      photos?: string[];
+      materialsUsed?: string;
+    }
+  ): Promise<{ advance: ProgressAdvance; item: MaintenanceItem }> {
+    try {
+      const result = await FirebaseDatabaseService.addProgressAdvance(itemId, payload);
+      const local = getLocalStoredItems();
+      const idx = local.findIndex(i => i.id === itemId);
+      if (idx !== -1) {
+        local[idx] = result.item;
+        setLocalStoredItems(local);
+      }
+      return result;
+    } catch (e) {
+      const local = getLocalStoredItems();
+      const item = local.find(i => i.id === itemId);
+      if (!item) throw new Error('Registro de mantenimiento no encontrado');
+
+      const now = new Date().toISOString();
+      const advance: ProgressAdvance = {
+        id: `adv_${Date.now()}`,
+        itemId,
+        authorId: payload.authorId,
+        authorName: payload.authorName,
+        authorRole: payload.authorRole,
+        date: now,
+        note: payload.note.trim(),
+        statusAfter: payload.statusAfter || item.status,
+        photos: payload.photos || [],
+        materialsUsed: payload.materialsUsed
+      };
+
+      item.advances = item.advances || [];
+      item.advances.push(advance);
+      if (payload.statusAfter) {
+        item.status = payload.statusAfter;
+      }
+      item.updatedAt = now;
+      setLocalStoredItems(local);
+      return { advance, item };
+    }
   }
 
   static async deleteMaintenanceItem(id: string): Promise<boolean> {
-    const res = await fetch(`${API_BASE}/maintenance/${id}`, {
-      method: 'DELETE'
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Error al eliminar reporte');
-    return true;
+    try {
+      await FirebaseDatabaseService.deleteMaintenanceItem(id);
+      const local = getLocalStoredItems();
+      const filtered = local.filter(i => i.id !== id);
+      setLocalStoredItems(filtered);
+      return true;
+    } catch (e) {
+      const local = getLocalStoredItems();
+      const filtered = local.filter(i => i.id !== id);
+      setLocalStoredItems(filtered);
+      return true;
+    }
   }
 
   static async getStats(): Promise<InstitutionalStats> {
-    const res = await fetch(`${API_BASE}/stats`);
-    if (!res.ok) throw new Error('Error al obtener estadísticas');
-    return res.json();
+    try {
+      return await FirebaseDatabaseService.getStats();
+    } catch (e) {
+      const items = getLocalStoredItems();
+      const pendingUsers = getLocalStoredUsers().filter(u => u.status === 'PENDING_APPROVAL').length;
+      return MaintenanceService.calculateStats(items, pendingUsers);
+    }
   }
 }

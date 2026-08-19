@@ -324,56 +324,97 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </div>
 
                 {/* Quick Access Demo Accounts */}
-                <div className="pt-3 border-t border-[#ECE5D8] space-y-2">
+                <div className="pt-3 border-t border-[#ECE5D8] space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider flex items-center gap-1">
+                    <p className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                       <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Ingreso Rápido de Prueba (Cuentas Demo)</span>
+                      <span>Administradores Generales (Firebase Cloud)</span>
                     </p>
-                    <span className="text-[10px] text-slate-400">Clic para probar</span>
+                    <span className="text-[10px] text-emerald-700 font-bold bg-emerald-100/80 px-2 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                      Firestore
+                    </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {/* Registered General Administrators */}
+                  <div className="grid grid-cols-1 gap-1.5">
                     <button
                       type="button"
-                      onClick={() => handleQuickLogin('rectoria', 'password123')}
+                      onClick={() => handleQuickLogin('cristalpulecio@gmail.com', 'password123')}
                       disabled={isSubmitting}
-                      className="p-2.5 rounded-xl bg-purple-100/90 hover:bg-purple-200 text-purple-950 text-left text-xs font-bold border border-purple-300 transition-all cursor-pointer shadow-sm"
+                      className="p-2 rounded-xl bg-purple-100/90 hover:bg-purple-200 text-purple-950 text-left text-xs font-bold border border-purple-300 transition-all cursor-pointer shadow-sm flex items-center justify-between"
                     >
-                      <div className="flex items-center gap-1 text-purple-900 font-extrabold">
-                        <span>👑 Administrador / Rector</span>
+                      <div>
+                        <div className="flex items-center gap-1.5 text-purple-950 font-black">
+                          <span>👑 Cristal Pulecio</span>
+                          <span className="text-[10px] text-purple-700 font-normal">cristalpulecio@gmail.com</span>
+                        </div>
+                        <p className="text-[10px] text-purple-800 font-normal">
+                          Administradora General • Privilegios Totales
+                        </p>
                       </div>
-                      <p className="text-[10px] text-purple-800 font-normal mt-0.5">
-                        Aprueba usuarios y gestiona todo
-                      </p>
+                      <span className="text-[10px] font-bold text-purple-900 bg-purple-200/80 px-2 py-0.5 rounded-lg">Entrar</span>
                     </button>
 
                     <button
                       type="button"
+                      onClick={() => handleQuickLogin('waespinosa2017@gmail.com', 'password123')}
+                      disabled={isSubmitting}
+                      className="p-2 rounded-xl bg-indigo-100/90 hover:bg-indigo-200 text-indigo-950 text-left text-xs font-bold border border-indigo-300 transition-all cursor-pointer shadow-sm flex items-center justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 text-indigo-950 font-black">
+                          <span>👑 W. A. Espinosa</span>
+                          <span className="text-[10px] text-indigo-700 font-normal">waespinosa2017@gmail.com</span>
+                        </div>
+                        <p className="text-[10px] text-indigo-800 font-normal">
+                          Administrador General • Control de Infraestructura
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-bold text-indigo-900 bg-indigo-200/80 px-2 py-0.5 rounded-lg">Entrar</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickLogin('karollsofiaac19@gmail.com', 'password123')}
+                      disabled={isSubmitting}
+                      className="p-2 rounded-xl bg-emerald-100/90 hover:bg-emerald-200 text-emerald-950 text-left text-xs font-bold border border-emerald-300 transition-all cursor-pointer shadow-sm flex items-center justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 text-emerald-950 font-black">
+                          <span>👑 Karoll Sofía</span>
+                          <span className="text-[10px] text-emerald-700 font-normal">karollsofiaac19@gmail.com</span>
+                        </div>
+                        <p className="text-[10px] text-emerald-800 font-normal">
+                          Administradora General • Coordinación Superior
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-bold text-emerald-900 bg-emerald-200/80 px-2 py-0.5 rounded-lg">Entrar</span>
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pt-1">
+                    Otras Cuentas Demo:
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
                       onClick={() => handleQuickLogin('coord.mantenimiento', 'password123')}
                       disabled={isSubmitting}
-                      className="p-2.5 rounded-xl bg-blue-100/90 hover:bg-blue-200 text-blue-950 text-left text-xs font-bold border border-blue-300 transition-all cursor-pointer shadow-sm"
+                      className="p-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-950 text-left text-xs font-bold border border-blue-200 transition-all cursor-pointer"
                     >
-                      <div className="flex items-center gap-1 text-blue-900 font-extrabold">
-                        <span>🛠️ Mantenimiento</span>
-                      </div>
-                      <p className="text-[10px] text-blue-800 font-normal mt-0.5">
-                        Control técnico y avances
-                      </p>
+                      <span>🛠️ Mantenimiento</span>
+                      <p className="text-[10px] text-blue-700 font-normal">coord.mantenimiento</p>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => handleQuickLogin('prof.martinez', 'password123')}
                       disabled={isSubmitting}
-                      className="p-2.5 rounded-xl bg-emerald-100/90 hover:bg-emerald-200 text-emerald-950 text-left text-xs font-bold border border-emerald-300 transition-all cursor-pointer shadow-sm"
+                      className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-950 text-left text-xs font-bold border border-slate-300 transition-all cursor-pointer"
                     >
-                      <div className="flex items-center gap-1 text-emerald-900 font-extrabold">
-                        <span>📚 Docente de Aula</span>
-                      </div>
-                      <p className="text-[10px] text-emerald-800 font-normal mt-0.5">
-                        Reporta daños en salones
-                      </p>
+                      <span>📚 Docente de Aula</span>
+                      <p className="text-[10px] text-slate-700 font-normal">prof.martinez</p>
                     </button>
                   </div>
                 </div>
