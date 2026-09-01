@@ -8,7 +8,9 @@ import {
   Users,
   LogOut,
   Layers,
-  Sparkles
+  Sparkles,
+  Printer,
+  KeyRound
 } from 'lucide-react';
 import { User, AreaType } from '../core/domain/entities';
 
@@ -18,6 +20,8 @@ interface NavbarProps {
   onSelectArea: (area: AreaType | 'ALL') => void;
   onOpenNewIncident: () => void;
   onOpenApprovalPanel: () => void;
+  onOpenPrintAuthorizedModal?: () => void;
+  onOpenPasswordModal?: () => void;
   onOpenArchitectureModal: () => void;
   onLogout: () => void;
   onOpenLogin: () => void;
@@ -30,6 +34,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectArea,
   onOpenNewIncident,
   onOpenApprovalPanel,
+  onOpenPrintAuthorizedModal,
+  onOpenPasswordModal,
   onOpenArchitectureModal,
   onLogout,
   onOpenLogin,
@@ -68,6 +74,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Quick Actions & User Profile */}
           <div className="flex items-center gap-2 sm:gap-3">
             
+            {/* Print / View Authorized Staff Directory */}
+            {onOpenPrintAuthorizedModal && (
+              <button
+                onClick={onOpenPrintAuthorizedModal}
+                title="Ver e Imprimir Lista de Personal Autorizado"
+                className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 text-xs font-semibold border border-emerald-500/40 flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Lista Autorizados</span>
+              </button>
+            )}
+
             {/* Architecture Info Button */}
             <button
               onClick={onOpenArchitectureModal}
@@ -129,13 +147,26 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </div>
                   </div>
 
-                  <button
-                    onClick={onLogout}
-                    title="Cerrar sesión institucional"
-                    className="p-2 rounded-lg bg-slate-800/80 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 border border-slate-700 transition-colors cursor-pointer"
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {onOpenPasswordModal && (
+                      <button
+                        onClick={onOpenPasswordModal}
+                        title="Cambiar contraseña de mi cuenta institucional"
+                        className="px-2.5 py-1.5 rounded-lg bg-purple-950/80 hover:bg-purple-900 text-purple-200 border border-purple-600/40 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                      >
+                        <KeyRound className="w-3.5 h-3.5 text-purple-400" />
+                        <span className="hidden xl:inline">Cambiar Clave</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={onLogout}
+                      title="Cerrar sesión institucional"
+                      className="p-2 rounded-lg bg-slate-800/80 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 border border-slate-700 transition-colors cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (

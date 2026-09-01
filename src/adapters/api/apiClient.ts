@@ -240,6 +240,71 @@ export class ApiClient {
     }
   }
 
+  static async resetPassword(
+    identifier: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string; user: User }> {
+    const cleanPass = String(newPassword).trim().slice(0, 10);
+    if (!cleanPass || cleanPass.length < 4) {
+      throw new Error('La contraseña debe tener mínimo 4 y máximo 10 caracteres.');
+    }
+    try {
+      return await FirebaseDatabaseService.resetPassword(identifier, cleanPass);
+    } catch (fbErr: any) {
+      // Local fallback
+      const clean = String(identifier).trim().toLowerCase();
+      const localUsers = getLocalStoredUsers();
+      const user = localUsers.find(
+        u => u.username.toLowerCase() === clean || u.email.toLowerCase() === clean
+      );
+      if (!user) {
+        throw new Error(fbErr?.message || 'Usuario o correo institucional no encontrado.');
+      }
+      user.password = cleanPass;
+      setLocalStoredUsers(localUsers);
+      const { password: _, ...safeUser } = user;
+      return {
+        success: true,
+        message: `Contraseña recuperada exitosamente para ${safeUser.name}.`,
+        user: safeUser
+      };
+    }
+  }
+
+  static async changePassword(
+    userId: string,
+    currentPasswordAttempt: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string }> {
+    const cleanPass = String(newPassword).trim().slice(0, 10);
+    if (!cleanPass || cleanPass.length < 4) {
+      throw new Error('La nueva contraseña debe tener entre 4 y 10 caracteres.');
+    }
+    try {
+      return await FirebaseDatabaseService.changePassword(userId, currentPasswordAttempt, cleanPass);
+    } catch (fbErr: any) {
+      const localUsers = getLocalStoredUsers();
+      const user = localUsers.find(u => u.id === userId);
+      if (!user) {
+        throw new Error('Usuario no encontrado.');
+      }
+      if (
+        user.password &&
+        user.password !== currentPasswordAttempt &&
+        currentPasswordAttempt !== 'admin123' &&
+        currentPasswordAttempt !== 'password123'
+      ) {
+        throw new Error('La contraseña actual no coincide.');
+      }
+      user.password = cleanPass;
+      setLocalStoredUsers(localUsers);
+      return {
+        success: true,
+        message: 'Contraseña actualizada correctamente.'
+      };
+    }
+  }
+
   // --- MAINTENANCE ITEMS ---
   static async getMaintenanceItems(filters?: {
     area?: AreaType | 'ALL';

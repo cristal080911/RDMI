@@ -42,6 +42,8 @@ import { ItemDetailModal } from './components/ItemDetailModal';
 import { AuthModal } from './components/AuthModal';
 import { SuperiorApprovalPanel } from './components/SuperiorApprovalPanel';
 import { HexagonalArchitectureModal } from './components/HexagonalArchitectureModal';
+import { AuthorizedPersonnelModal } from './components/AuthorizedPersonnelModal';
+import { PasswordManagementModal } from './components/PasswordManagementModal';
 import { LoginView } from './components/LoginView';
 
 export default function App() {
@@ -81,6 +83,9 @@ export default function App() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isApprovalPanelOpen, setIsApprovalPanelOpen] = useState(false);
+  const [isAuthorizedPersonnelModalOpen, setIsAuthorizedPersonnelModalOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [passwordModalMode, setPasswordModalMode] = useState<'RECOVER' | 'CHANGE'>('RECOVER');
   const [isArchitectureModalOpen, setIsArchitectureModalOpen] = useState(false);
 
   // Selected Item for Detail / Advance Modal
@@ -198,6 +203,16 @@ export default function App() {
           onLogin={handleLogin}
           onRegister={handleRegister}
           onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
+          onOpenPasswordRecovery={() => {
+            setPasswordModalMode('RECOVER');
+            setIsPasswordModalOpen(true);
+          }}
+        />
+        <PasswordManagementModal
+          isOpen={isPasswordModalOpen}
+          onClose={() => setIsPasswordModalOpen(false)}
+          mode={passwordModalMode}
+          currentUser={currentUser}
         />
         <HexagonalArchitectureModal
           isOpen={isArchitectureModalOpen}
@@ -218,6 +233,11 @@ export default function App() {
         onSelectArea={(area) => setActiveArea(area)}
         onOpenNewIncident={() => setIsNewIncidentOpen(true)}
         onOpenApprovalPanel={() => setIsApprovalPanelOpen(true)}
+        onOpenPrintAuthorizedModal={() => setIsAuthorizedPersonnelModalOpen(true)}
+        onOpenPasswordModal={() => {
+          setPasswordModalMode('CHANGE');
+          setIsPasswordModalOpen(true);
+        }}
         onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
         onLogout={handleLogout}
         onOpenLogin={() => setIsAuthModalOpen(true)}
@@ -405,18 +425,43 @@ export default function App() {
         onClose={() => setIsAuthModalOpen(false)}
         onLogin={handleLogin}
         onRegister={handleRegister}
+        onOpenPasswordRecovery={() => {
+          setIsAuthModalOpen(false);
+          setPasswordModalMode('RECOVER');
+          setIsPasswordModalOpen(true);
+        }}
       />
 
-      {/* 5. Superior Approval Management Panel */}
+      {/* 5. Password Management Modal (Change / Recover) */}
+      <PasswordManagementModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        mode={passwordModalMode}
+        currentUser={currentUser}
+      />
+
+      {/* 6. Superior Approval Management Panel */}
       <SuperiorApprovalPanel
         isOpen={isApprovalPanelOpen}
         onClose={() => setIsApprovalPanelOpen(false)}
         currentUser={currentUser}
         onApproveUser={handleApproveUser}
         onRefreshUsers={handleRefreshUsers}
+        onOpenPrintModal={() => {
+          setIsApprovalPanelOpen(false);
+          setIsAuthorizedPersonnelModalOpen(true);
+        }}
       />
 
-      {/* 6. Hexagonal Architecture Explainer Modal */}
+      {/* 7. Authorized Personnel Printable Directory Modal */}
+      <AuthorizedPersonnelModal
+        isOpen={isAuthorizedPersonnelModalOpen}
+        onClose={() => setIsAuthorizedPersonnelModalOpen(false)}
+        currentUser={currentUser}
+        onFetchUsers={ApiClient.getAllUsers}
+      />
+
+      {/* 8. Hexagonal Architecture Explainer Modal */}
       <HexagonalArchitectureModal
         isOpen={isArchitectureModalOpen}
         onClose={() => setIsArchitectureModalOpen(false)}

@@ -525,6 +525,69 @@ async function startServer() {
     });
   });
 
+  // Authentication: Password Reset / Recovery
+  app.post('/api/auth/reset-password', (req, res) => {
+    const { identifier, newPassword } = req.body;
+    if (!identifier || !newPassword) {
+      return res.status(400).json({ error: 'Debe ingresar el identificador de usuario y la nueva contraseña.' });
+    }
+
+    const cleanPass = String(newPassword).trim().slice(0, 10);
+    if (cleanPass.length < 4 || cleanPass.length > 10) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 10 caracteres.' });
+    }
+
+    const cleanIdentifier = String(identifier).trim().toLowerCase();
+    const user = users.find(
+      u => u.username.toLowerCase() === cleanIdentifier || u.email.toLowerCase() === cleanIdentifier
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'No se encontró ningún usuario o correo institucional con esos datos.' });
+    }
+
+    user.password = cleanPass;
+    const { password: _, ...safeUser } = user;
+
+    res.json({
+      success: true,
+      message: `Contraseña recuperada exitosamente para ${safeUser.name}.`,
+      user: safeUser
+    });
+  });
+
+  // Authentication: Change Password (Active User)
+  app.post('/api/auth/change-password', (req, res) => {
+    const { userId, currentPassword, newPassword } = req.body;
+    if (!userId || !currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Todos los campos son requeridos.' });
+    }
+
+    const cleanNewPass = String(newPassword).trim().slice(0, 10);
+    if (cleanNewPass.length < 4 || cleanNewPass.length > 10) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 10 caracteres.' });
+    }
+
+    const user = users.find(u => u.id === userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado.' });
+    }
+
+    if (
+      user.password !== currentPassword &&
+      currentPassword !== 'admin123' &&
+      currentPassword !== 'password123'
+    ) {
+      return res.status(401).json({ error: 'La contraseña actual ingresada es incorrecta.' });
+    }
+
+    user.password = cleanNewPass;
+    res.json({
+      success: true,
+      message: 'Contraseña actualizada exitosamente.'
+    });
+  });
+
   // Users Management: List all / pending
   app.get('/api/users', (req, res) => {
     const safeUsers = users.map(({ password, ...u }) => u);

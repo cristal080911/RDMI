@@ -37,12 +37,14 @@ interface LoginViewProps {
     isStudent?: boolean;
   }) => Promise<{ success: boolean; message: string; user?: UserEntity }>;
   onOpenArchitectureModal: () => void;
+  onOpenPasswordRecovery?: (initialIdentifier?: string) => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
   onLogin,
   onRegister,
-  onOpenArchitectureModal
+  onOpenArchitectureModal,
+  onOpenPasswordRecovery
 }) => {
   const [tab, setTab] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
 
@@ -329,6 +331,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
                       )}
                     </button>
                   </div>
+                  {onOpenPasswordRecovery && (
+                    <div className="flex justify-end mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onOpenPasswordRecovery(loginUsername)}
+                        className="text-[11px] font-bold text-purple-900 hover:text-purple-700 hover:underline flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <KeyRound className="w-3 h-3 text-purple-700" />
+                        <span>¿Olvidó su contraseña? Recuperar / Cambiar</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <button

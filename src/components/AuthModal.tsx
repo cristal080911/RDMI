@@ -30,13 +30,15 @@ interface AuthModalProps {
     department: string;
     isStudent?: boolean;
   }) => Promise<{ message: string }>;
+  onOpenPasswordRecovery?: (initialIdentifier?: string) => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
   onLogin,
-  onRegister
+  onRegister,
+  onOpenPasswordRecovery
 }) => {
   const [tab, setTab] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
   
@@ -231,6 +233,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     className="w-full pl-9 pr-3 py-2 rounded-xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-600 focus:outline-none"
                   />
                 </div>
+                {onOpenPasswordRecovery && (
+                  <div className="flex justify-end mt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenPasswordRecovery(loginUsername);
+                      }}
+                      className="text-[11px] font-bold text-purple-900 hover:text-purple-700 hover:underline flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <KeyRound className="w-3 h-3 text-purple-700" />
+                      <span>¿Olvidó su contraseña? Recuperar</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               <button
