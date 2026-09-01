@@ -18,7 +18,9 @@ import {
   HelpCircle,
   Clock,
   ShieldCheck,
-  Info
+  Info,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { UserRole, User as UserEntity } from '../core/domain/entities';
 
@@ -47,11 +49,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   // Register Form State
   const [regUsername, setRegUsername] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [regName, setRegName] = useState('');
   const [regRole, setRegRole] = useState<UserRole>('DOCENTE');
   const [regRoleTitle, setRegRoleTitle] = useState('');
@@ -66,7 +70,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     role: string;
   } | null>(null);
 
-  // Demo shortcut login
+  // Demo shortcut login (using standard passwords <= 10 characters)
   const handleQuickLogin = async (username: string, pass: string) => {
     setError(null);
     setRegisteredSuccessInfo(null);
@@ -84,6 +88,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
     e.preventDefault();
     if (!loginUsername.trim() || !loginPassword) {
       setError('Por favor ingrese su usuario o correo y su contraseña.');
+      return;
+    }
+    if (loginPassword.length > 10) {
+      setError('La contraseña no puede exceder el límite de 10 dígitos o caracteres.');
       return;
     }
     setError(null);
@@ -105,6 +113,16 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
     if (!regUsername.trim() || !regEmail.trim() || !regPassword || !regName.trim()) {
       setError('Por favor diligencie todos los campos obligatorios (*).');
+      return;
+    }
+
+    if (regPassword.length > 10) {
+      setError('La contraseña no puede superar los 10 dígitos o caracteres.');
+      return;
+    }
+
+    if (regPassword.length < 4) {
+      setError('La contraseña debe tener al menos 4 caracteres.');
       return;
     }
 
@@ -281,20 +299,35 @@ export const LoginView: React.FC<LoginViewProps> = ({
                     <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
                       Contraseña *
                     </label>
-                    <span className="text-[11px] text-purple-900 font-semibold">
-                      Seguridad institucional
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-purple-900 font-semibold bg-purple-100/80 px-2 py-0.5 rounded-md border border-purple-200">
+                        Máx. 10 dígitos ({loginPassword.length}/10)
+                      </span>
+                    </div>
                   </div>
                   <div className="relative">
                     <Lock className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
-                      type="password"
+                      type={showLoginPassword ? 'text' : 'password'}
                       required
+                      maxLength={10}
                       value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm placeholder:text-slate-400"
+                      onChange={(e) => setLoginPassword(e.target.value.slice(0, 10))}
+                      placeholder="Máximo 10 caracteres"
+                      className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm placeholder:text-slate-400"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      title={showLoginPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
+                    >
+                      {showLoginPassword ? (
+                        <EyeOff className="w-4 h-4 text-purple-800" />
+                      ) : (
+                        <Eye className="w-4 h-4 text-slate-500 hover:text-purple-800" />
+                      )}
+                    </button>
                   </div>
                 </div>
 
@@ -340,7 +373,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <div className="grid grid-cols-1 gap-1.5">
                     <button
                       type="button"
-                      onClick={() => handleQuickLogin('cristalpulecio@gmail.com', 'password123')}
+                      onClick={() => handleQuickLogin('cristalpulecio@gmail.com', 'admin123')}
                       disabled={isSubmitting}
                       className="p-2 rounded-xl bg-purple-100/90 hover:bg-purple-200 text-purple-950 text-left text-xs font-bold border border-purple-300 transition-all cursor-pointer shadow-sm flex items-center justify-between"
                     >
@@ -358,7 +391,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handleQuickLogin('waespinosa2017@gmail.com', 'password123')}
+                      onClick={() => handleQuickLogin('waespinosa2017@gmail.com', 'admin123')}
                       disabled={isSubmitting}
                       className="p-2 rounded-xl bg-indigo-100/90 hover:bg-indigo-200 text-indigo-950 text-left text-xs font-bold border border-indigo-300 transition-all cursor-pointer shadow-sm flex items-center justify-between"
                     >
@@ -376,7 +409,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handleQuickLogin('karollsofiaac19@gmail.com', 'password123')}
+                      onClick={() => handleQuickLogin('karollsofiaac19@gmail.com', 'admin123')}
                       disabled={isSubmitting}
                       className="p-2 rounded-xl bg-emerald-100/90 hover:bg-emerald-200 text-emerald-950 text-left text-xs font-bold border border-emerald-300 transition-all cursor-pointer shadow-sm flex items-center justify-between"
                     >
@@ -399,7 +432,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => handleQuickLogin('coord.mantenimiento', 'password123')}
+                      onClick={() => handleQuickLogin('coord.mantenimiento', 'admin123')}
                       disabled={isSubmitting}
                       className="p-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-950 text-left text-xs font-bold border border-blue-200 transition-all cursor-pointer"
                     >
@@ -409,7 +442,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handleQuickLogin('prof.martinez', 'password123')}
+                      onClick={() => handleQuickLogin('prof.martinez', 'admin123')}
                       disabled={isSubmitting}
                       className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-950 text-left text-xs font-bold border border-slate-300 transition-all cursor-pointer"
                     >
@@ -476,17 +509,37 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-1">
-                    Contraseña *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    placeholder="Mínimo 6 caracteres"
-                    className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-emerald-600 focus:outline-none shadow-sm"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                      Contraseña *
+                    </label>
+                    <span className="text-[11px] text-emerald-900 font-semibold bg-emerald-100/80 px-2 py-0.5 rounded-md border border-emerald-200">
+                      Máx. 10 dígitos ({regPassword.length}/10)
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showRegPassword ? 'text' : 'password'}
+                      required
+                      maxLength={10}
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value.slice(0, 10))}
+                      placeholder="Máximo 10 caracteres"
+                      className="w-full px-3.5 pr-11 py-2 rounded-xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-emerald-600 focus:outline-none shadow-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegPassword(!showRegPassword)}
+                      title={showRegPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-emerald-900 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                    >
+                      {showRegPassword ? (
+                        <EyeOff className="w-4 h-4 text-emerald-800" />
+                      ) : (
+                        <Eye className="w-4 h-4 text-slate-500 hover:text-emerald-800" />
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Institutional Role Selection */}
