@@ -54,6 +54,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-900/70 text-purple-200 border border-purple-500/40">
                   Hexagonal v2.0
                 </span>
+                <span className="text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Firebase DB Activa
+                </span>
               </div>
               <p className="text-[11px] sm:text-xs text-slate-300 font-medium hidden sm:block">
                 Control de Mantenimientos: Eléctricos • Estructurales • Recursos

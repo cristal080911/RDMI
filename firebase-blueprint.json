@@ -1,0 +1,204 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Institutional staff, teachers, coordinators and administrators.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the user"
+        },
+        "username": {
+          "type": "string",
+          "description": "Unique username"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Institutional email address"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the staff member"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["SUPERIOR", "ADMINISTRATIVO", "DOCENTE"],
+          "description": "Institutional access role"
+        },
+        "roleTitle": {
+          "type": "string",
+          "description": "Specific job title"
+        },
+        "department": {
+          "type": "string",
+          "description": "Department or subject area"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING_APPROVAL", "APPROVED", "REJECTED"],
+          "description": "Authorization status"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when account was created"
+        },
+        "approvedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when account was approved"
+        },
+        "approvedBy": {
+          "type": "string",
+          "description": "Name of director or administrator who approved account"
+        }
+      },
+      "required": ["id", "username", "email", "name", "role", "status", "createdAt"]
+    },
+    "MaintenanceItem": {
+      "title": "MaintenanceItem",
+      "description": "Institutional maintenance issue, work order, or equipment asset.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique maintenance item identifier"
+        },
+        "code": {
+          "type": "string",
+          "description": "Institutional sequential code (e.g. ELE-101, EST-201, REC-301)"
+        },
+        "area": {
+          "type": "string",
+          "enum": ["ELECTRICOS", "ESTRUCTURALES", "RECURSOS"],
+          "description": "Area classification"
+        },
+        "title": {
+          "type": "string",
+          "description": "Concise summary of the maintenance requirement"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the issue or requirement"
+        },
+        "location": {
+          "type": "string",
+          "description": "Physical classroom, lab, pavilion or sports area"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["DANADO", "EN_MANTENIMIENTO", "NUEVO_OPERATIVO"],
+          "description": "Current lifecycle status"
+        },
+        "urgency": {
+          "type": "string",
+          "enum": ["URGENTE", "IMPORTANTE", "NADA_URGENTE"],
+          "description": "Priority level"
+        },
+        "reportedBy": {
+          "type": "object",
+          "description": "Staff member who reported the maintenance"
+        },
+        "assignedTo": {
+          "type": "object",
+          "description": "Person or contractor assigned to resolve the work order"
+        },
+        "photos": {
+          "type": "array",
+          "description": "List of photo attachment URLs"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last modification timestamp"
+        },
+        "advances": {
+          "type": "array",
+          "description": "List of progress updates"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Administrative notes"
+        }
+      },
+      "required": ["id", "code", "area", "title", "description", "location", "status", "urgency", "reportedBy", "assignedTo", "createdAt", "updatedAt"]
+    },
+    "ProgressAdvance": {
+      "title": "ProgressAdvance",
+      "description": "Technical progress note and status transition.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique advance ID"
+        },
+        "itemId": {
+          "type": "string",
+          "description": "Target maintenance item ID"
+        },
+        "authorId": {
+          "type": "string",
+          "description": "Author user ID"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Name of the technician or coordinator"
+        },
+        "authorRole": {
+          "type": "string",
+          "description": "Role of the person registering progress"
+        },
+        "date": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the progress update"
+        },
+        "note": {
+          "type": "string",
+          "description": "Detailed notes on works performed"
+        },
+        "statusAfter": {
+          "type": "string",
+          "enum": ["DANADO", "EN_MANTENIMIENTO", "NUEVO_OPERATIVO"],
+          "description": "Status of the item after the intervention"
+        },
+        "photos": {
+          "type": "array",
+          "description": "Photos of the progress"
+        },
+        "materialsUsed": {
+          "type": "string",
+          "description": "Materials and supplies utilized"
+        }
+      },
+      "required": ["id", "itemId", "authorId", "authorName", "authorRole", "date", "note", "statusAfter"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Institutional users, staff, teachers and administrators"
+    },
+    "/maintenance_items/{itemId}": {
+      "schema": {
+        "$ref": "#/entities/MaintenanceItem"
+      },
+      "description": "Maintenance records across Electrical, Structural and Educational Resources areas"
+    },
+    "/advances/{advanceId}": {
+      "schema": {
+        "$ref": "#/entities/ProgressAdvance"
+      },
+      "description": "Progress advances and technical intervention logs"
+    }
+  }
+}

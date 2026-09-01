@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
@@ -58,8 +59,50 @@ interface MaintenanceRecord {
   notes?: string;
 }
 
-// In-Memory Database with realistic institutional seeds
+// In-Memory Database with realistic institutional seeds and configured General Administrators
 const users: UserRecord[] = [
+  {
+    id: 'usr_admin_cristal',
+    username: 'cristalpulecio',
+    password: 'password123',
+    email: 'cristalpulecio@gmail.com',
+    name: 'Cristal Pulecio',
+    role: 'SUPERIOR',
+    roleTitle: 'Administradora General / Rectora',
+    department: 'Dirección General y Rectoría',
+    status: 'APPROVED',
+    createdAt: new Date().toISOString(),
+    approvedAt: new Date().toISOString(),
+    approvedBy: 'Sistema Central'
+  },
+  {
+    id: 'usr_admin_waespinosa',
+    username: 'waespinosa',
+    password: 'password123',
+    email: 'waespinosa2017@gmail.com',
+    name: 'W. A. Espinosa',
+    role: 'SUPERIOR',
+    roleTitle: 'Administrador General / Dirección de Infraestructura',
+    department: 'Dirección General de Operaciones',
+    status: 'APPROVED',
+    createdAt: new Date().toISOString(),
+    approvedAt: new Date().toISOString(),
+    approvedBy: 'Sistema Central'
+  },
+  {
+    id: 'usr_admin_karoll',
+    username: 'karollsofia',
+    password: 'password123',
+    email: 'karollsofiaac19@gmail.com',
+    name: 'Karoll Sofía',
+    role: 'SUPERIOR',
+    roleTitle: 'Administradora General / Coordinación Superior',
+    department: 'Dirección y Coordinación Institucional',
+    status: 'APPROVED',
+    createdAt: new Date().toISOString(),
+    approvedAt: new Date().toISOString(),
+    approvedBy: 'Sistema Central'
+  },
   {
     id: 'usr_sup_1',
     username: 'rectoria',

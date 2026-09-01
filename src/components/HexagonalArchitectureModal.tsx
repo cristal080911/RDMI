@@ -99,23 +99,23 @@ export const HexagonalArchitectureModal: React.FC<HexagonalArchitectureModalProp
               </div>
             </div>
 
-            {/* 3. Adapters (HTTP & UI) */}
+              {/* 3. Adapters (HTTP, Firebase & UI) */}
             <div className="p-4 rounded-2xl bg-emerald-50/90 border border-emerald-200 shadow-sm space-y-2">
               <div className="flex items-center gap-2 text-emerald-900 font-extrabold text-xs uppercase tracking-wider">
                 <Boxes className="w-4 h-4 text-emerald-700" />
                 <span>3. Adaptadores Primarios & Secundarios</span>
               </div>
               <p className="text-[11px] text-slate-600 leading-normal">
-                Conexión con el mundo exterior:
+                Conexión con el mundo exterior y BD:
               </p>
               <ul className="list-disc list-inside text-[11px] text-emerald-950 font-medium space-y-1">
-                <li><code>ApiClient</code> (Adaptador REST)</li>
+                <li><code>Firebase Firestore</code> (Base de Datos en la Nube)</li>
+                <li><code>ApiClient</code> (Gateway & Cache Resiliente)</li>
                 <li><code>Express Server</code> (/server.ts)</li>
                 <li><code>React UI</code> (Tablas, Modales, Vistas)</li>
-                <li>Almacenamiento Multi-dispositivo</li>
               </ul>
               <div className="font-mono text-[10px] text-emerald-800 bg-emerald-100 p-1.5 rounded">
-                📁 /src/adapters/ & /src/components/
+                📁 /src/lib/firebase.ts & /src/adapters/
               </div>
             </div>
 
