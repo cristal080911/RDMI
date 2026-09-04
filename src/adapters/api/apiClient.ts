@@ -421,6 +421,33 @@ export class ApiClient {
       const local = getLocalStoredItems();
       local.unshift(created);
       setLocalStoredItems(local);
+
+      // Keep local damage reports in sync
+      const localReports = getLocalStoredDamageReports();
+      let repStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' = 'PENDIENTE';
+      if (created.status === 'NUEVO_OPERATIVO') repStatus = 'RESUELTO';
+      else if (created.status === 'EN_MANTENIMIENTO') repStatus = 'EN_REPARACION';
+
+      const damageRep: DamageReport = {
+        id: `rep_dan_${created.id}`,
+        reportCode: `REP-${created.code}`,
+        itemId: created.id,
+        itemCode: created.code,
+        area: created.area,
+        title: created.title,
+        damageDescription: created.description,
+        location: created.location,
+        urgency: created.urgency,
+        status: repStatus,
+        reportedBy: created.reportedBy,
+        assignedTo: created.assignedTo,
+        photos: created.photos || [],
+        createdAt: created.createdAt,
+        resolvedAt: repStatus === 'RESUELTO' ? created.createdAt : undefined,
+        resolvedBy: repStatus === 'RESUELTO' ? created.reportedBy.name : undefined
+      };
+      setLocalStoredDamageReports([damageRep, ...localReports.filter(r => r.id !== damageRep.id)]);
+
       return created;
     } catch (e) {
       // Local fallback
@@ -471,6 +498,33 @@ export class ApiClient {
 
       local.unshift(newItem);
       setLocalStoredItems(local);
+
+      // Local fallback for damage report
+      const localReports = getLocalStoredDamageReports();
+      let repStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' = 'PENDIENTE';
+      if (newItem.status === 'NUEVO_OPERATIVO') repStatus = 'RESUELTO';
+      else if (newItem.status === 'EN_MANTENIMIENTO') repStatus = 'EN_REPARACION';
+
+      const damageRep: DamageReport = {
+        id: `rep_dan_${newItem.id}`,
+        reportCode: `REP-${newItem.code}`,
+        itemId: newItem.id,
+        itemCode: newItem.code,
+        area: newItem.area,
+        title: newItem.title,
+        damageDescription: newItem.description,
+        location: newItem.location,
+        urgency: newItem.urgency,
+        status: repStatus,
+        reportedBy: newItem.reportedBy,
+        assignedTo: newItem.assignedTo,
+        photos: newItem.photos || [],
+        createdAt: now,
+        resolvedAt: repStatus === 'RESUELTO' ? now : undefined,
+        resolvedBy: repStatus === 'RESUELTO' ? newItem.reportedBy.name : undefined
+      };
+      setLocalStoredDamageReports([damageRep, ...localReports.filter(r => r.id !== damageRep.id)]);
+
       return newItem;
     }
   }

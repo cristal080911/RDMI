@@ -19,6 +19,14 @@ export interface FirestoreUserRecord extends User {
   password?: string;
 }
 
+/**
+ * Utility to strip undefined properties before sending to Firestore,
+ * preventing any "Unsupported field value: undefined" errors.
+ */
+function cleanForFirestore<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data));
+}
+
 // Initial Institutional Seed Data with Requested General Administrators
 export const INITIAL_ADMIN_USERS: FirestoreUserRecord[] = [
   {
@@ -377,7 +385,45 @@ export class FirebaseDatabaseService {
 
       if (itemsSnap.empty) {
         for (const item of INITIAL_FIRESTORE_ITEMS) {
-          await setDoc(doc(db, 'maintenance_items', item.id), item);
+          await setDoc(doc(db, 'maintenance_items', item.id), cleanForFirestore(item));
+        }
+      }
+
+      // 3. Seed damage reports collection if needed so all users immediately see reports
+      const damageCol = collection(db, 'damage_reports');
+      const damageSnap = await getDocs(damageCol);
+
+      if (damageSnap.empty) {
+        const currentItemsSnap = await getDocs(itemsCol);
+        for (const docSnap of currentItemsSnap.docs) {
+          const it = docSnap.data() as MaintenanceItem;
+          let repStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' = 'PENDIENTE';
+          if (it.status === 'NUEVO_OPERATIVO') {
+            repStatus = 'RESUELTO';
+          } else if (it.status === 'EN_MANTENIMIENTO') {
+            repStatus = 'EN_REPARACION';
+          } else {
+            repStatus = 'PENDIENTE';
+          }
+
+          const rep: DamageReport = {
+            id: `rep_dan_${it.id}`,
+            reportCode: `REP-${it.code}`,
+            itemId: it.id,
+            itemCode: it.code,
+            area: it.area,
+            title: it.title,
+            damageDescription: it.description,
+            location: it.location,
+            urgency: it.urgency,
+            status: repStatus,
+            reportedBy: it.reportedBy,
+            assignedTo: it.assignedTo,
+            photos: it.photos || [],
+            createdAt: it.createdAt,
+            solutionNotes: it.notes
+          };
+          await setDoc(doc(db, 'damage_reports', rep.id), cleanForFirestore(rep));
         }
       }
 
@@ -763,28 +809,50 @@ export class FirebaseDatabaseService {
     };
 
     try {
-      await setDoc(doc(db, 'maintenance_items', newItem.id), newItem);
+      // 1. Persist to maintenance_items collection
+      await setDoc(doc(db, 'maintenance_items', newItem.id), cleanForFirestore(newItem));
 
-      // If registered as damaged, also automatically record in dedicated damage_reports collection
-      if (newItem.status === 'DANADO') {
-        const damageRep: DamageReport = {
-          id: `rep_dan_${newItem.id}`,
-          reportCode: `REP-DAN-${count}`,
-          itemId: newItem.id,
-          itemCode: newItem.code,
-          area: newItem.area,
-          title: newItem.title,
-          damageDescription: newItem.description,
-          location: newItem.location,
-          urgency: newItem.urgency,
-          status: 'PENDIENTE',
-          reportedBy: newItem.reportedBy,
-          assignedTo: newItem.assignedTo,
-          photos: newItem.photos || [],
-          createdAt: now
-        };
-        await setDoc(doc(db, 'damage_reports', damageRep.id), damageRep);
+      // 2. Persist initial advance to advances collection if present
+      if (advances.length > 0) {
+        try {
+          await setDoc(doc(db, 'advances', advances[0].id), cleanForFirestore(advances[0]));
+        } catch (advErr) {
+          console.warn('Could not save advance to advances collection:', advErr);
+        }
       }
+
+      // 3. For EVERY report created, persist a synchronized record into damage_reports collection
+      // so it appears in the Reports Table for ALL institutional users across devices
+      let repStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' = 'PENDIENTE';
+      if (newItem.status === 'NUEVO_OPERATIVO') {
+        repStatus = 'RESUELTO';
+      } else if (newItem.status === 'EN_MANTENIMIENTO') {
+        repStatus = 'EN_REPARACION';
+      } else {
+        repStatus = 'PENDIENTE';
+      }
+
+      const damageRep: DamageReport = {
+        id: `rep_dan_${newItem.id}`,
+        reportCode: `REP-${newItem.code}`,
+        itemId: newItem.id,
+        itemCode: newItem.code,
+        area: newItem.area,
+        title: newItem.title,
+        damageDescription: newItem.description,
+        location: newItem.location,
+        urgency: newItem.urgency,
+        status: repStatus,
+        reportedBy: newItem.reportedBy,
+        assignedTo: newItem.assignedTo,
+        photos: newItem.photos || [],
+        createdAt: now,
+        resolvedAt: repStatus === 'RESUELTO' ? now : undefined,
+        resolvedBy: repStatus === 'RESUELTO' ? (newItem.reportedBy.name || 'Personal Institucional') : undefined,
+        solutionNotes: repStatus === 'RESUELTO' ? (newItem.notes || 'Registrado en estado operativo') : undefined
+      };
+
+      await setDoc(doc(db, 'damage_reports', damageRep.id), cleanForFirestore(damageRep));
     } catch (e) {
       console.warn('Error creating item in Firestore:', e);
     }
@@ -802,10 +870,10 @@ export class FirebaseDatabaseService {
     }
 
     const current = snap.data() as MaintenanceItem;
-    const finalUpdates = {
+    const finalUpdates = cleanForFirestore({
       ...updates,
       updatedAt: new Date().toISOString()
-    };
+    });
 
     await updateDoc(docRef, finalUpdates);
 
@@ -818,11 +886,11 @@ export class FirebaseDatabaseService {
           let repStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' = 'PENDIENTE';
           if (updates.status === 'NUEVO_OPERATIVO') repStatus = 'RESUELTO';
           else if (updates.status === 'EN_MANTENIMIENTO') repStatus = 'EN_REPARACION';
-          await updateDoc(repDoc.ref, {
+          await updateDoc(repDoc.ref, cleanForFirestore({
             status: repStatus,
-            resolvedAt: repStatus === 'RESUELTO' ? new Date().toISOString() : undefined,
-            resolvedBy: repStatus === 'RESUELTO' ? 'Sistema / Mantenimiento' : undefined
-          });
+            resolvedAt: repStatus === 'RESUELTO' ? new Date().toISOString() : null,
+            resolvedBy: repStatus === 'RESUELTO' ? 'Sistema / Mantenimiento' : null
+          }));
         }
       } catch (err) {
         console.warn('Syncing damage report status warning:', err);
@@ -871,15 +939,15 @@ export class FirebaseDatabaseService {
     const updatedAdvances = [...(item.advances || []), advance];
     const updatedStatus = payload.statusAfter || item.status;
 
-    await updateDoc(docRef, {
+    await updateDoc(docRef, cleanForFirestore({
       advances: updatedAdvances,
       status: updatedStatus,
       updatedAt: now
-    });
+    }));
 
     // Also persist into dedicated advances collection
     try {
-      await setDoc(doc(db, 'advances', advance.id), advance);
+      await setDoc(doc(db, 'advances', advance.id), cleanForFirestore(advance));
     } catch (e) {
       console.warn('Warning saving into advances collection:', e);
     }
@@ -1080,7 +1148,32 @@ export class FirebaseDatabaseService {
     };
 
     try {
-      await setDoc(doc(db, 'damage_reports', newReport.id), newReport);
+      await setDoc(doc(db, 'damage_reports', newReport.id), cleanForFirestore(newReport));
+
+      // Also ensure a corresponding maintenance item exists in the area tables for all users
+      if (!newReport.itemId) {
+        const prefix = newReport.area === 'ELECTRICOS' ? 'ELE' : newReport.area === 'ESTRUCTURALES' ? 'EST' : 'REC';
+        const mItem: MaintenanceItem = {
+          id: `item_${newReport.id}`,
+          code: `${prefix}-${Date.now().toString().slice(-4)}`,
+          area: newReport.area,
+          title: newReport.title,
+          description: newReport.damageDescription,
+          location: newReport.location,
+          status: 'DANADO',
+          urgency: newReport.urgency,
+          reportedBy: newReport.reportedBy,
+          assignedTo: newReport.assignedTo,
+          photos: newReport.photos || [],
+          createdAt: now,
+          updatedAt: now,
+          advances: []
+        };
+        await setDoc(doc(db, 'maintenance_items', mItem.id), cleanForFirestore(mItem));
+        newReport.itemId = mItem.id;
+        newReport.itemCode = mItem.code;
+        await updateDoc(doc(db, 'damage_reports', newReport.id), { itemId: mItem.id, itemCode: mItem.code });
+      }
     } catch (e) {
       console.warn('Error saving damage report in Firestore:', e);
     }
@@ -1111,7 +1204,7 @@ export class FirebaseDatabaseService {
     };
 
     try {
-      await updateDoc(docRef, updates);
+      await updateDoc(docRef, cleanForFirestore(updates));
     } catch (e) {
       console.warn('Error updating damage report in Firestore:', e);
     }
