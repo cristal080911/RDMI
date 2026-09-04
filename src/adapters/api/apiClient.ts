@@ -717,4 +717,37 @@ export class ApiClient {
     setLocalStoredDamageReports(filtered);
     return true;
   }
+
+  // --- REAL-TIME MULTI-USER LIVE SUBSCRIPTIONS ---
+  /**
+   * Listen for live updates on maintenance items from Firestore.
+   * Immediately notifies when any other user creates, updates, or adds progress.
+   */
+  static subscribeToMaintenanceItems(callback: (items: MaintenanceItem[]) => void): () => void {
+    return FirebaseDatabaseService.subscribeMaintenanceItems((items) => {
+      setLocalStoredItems(items);
+      callback(items);
+    });
+  }
+
+  /**
+   * Listen for live updates on damage reports from Firestore.
+   * Immediately notifies when any other user creates or updates report status.
+   */
+  static subscribeToDamageReports(callback: (reports: DamageReport[]) => void): () => void {
+    return FirebaseDatabaseService.subscribeDamageReports((reports) => {
+      setLocalStoredDamageReports(reports);
+      callback(reports);
+    });
+  }
+
+  /**
+   * Listen for live updates on institutional users from Firestore.
+   */
+  static subscribeToUsers(callback: (users: FirestoreUserRecord[]) => void): () => void {
+    return FirebaseDatabaseService.subscribeUsers((users) => {
+      setLocalStoredUsers(users);
+      callback(users);
+    });
+  }
 }

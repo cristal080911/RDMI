@@ -129,13 +129,59 @@ export default function App() {
     }
   }, []);
 
-  // Initial Load & Multi-device Live Polling (every 8 seconds)
+  // Multi-user Real-Time Firestore Synchronization & Live Fallback
   useEffect(() => {
+    // Initial fetch
     fetchData();
+
+    // Attach real-time Firestore listeners for zero-delay multi-user sync
+    const unsubItems = ApiClient.subscribeToMaintenanceItems((newItems) => {
+      setItems(newItems);
+      setStats((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          totalItems: newItems.length,
+          byArea: {
+            electricos: newItems.filter((i) => i.area === 'ELECTRICOS').length,
+            estructurales: newItems.filter((i) => i.area === 'ESTRUCTURALES').length,
+            recursos: newItems.filter((i) => i.area === 'RECURSOS').length
+          },
+          byStatus: {
+            danado: newItems.filter((i) => i.status === 'DANADO').length,
+            enMantenimiento: newItems.filter((i) => i.status === 'EN_MANTENIMIENTO').length,
+            nuevoOperativo: newItems.filter((i) => i.status === 'NUEVO_OPERATIVO').length
+          },
+          byUrgency: {
+            urgente: newItems.filter((i) => i.urgency === 'URGENTE').length,
+            importante: newItems.filter((i) => i.urgency === 'IMPORTANTE').length,
+            nadaUrgente: newItems.filter((i) => i.urgency === 'NADA_URGENTE').length
+          },
+          recentAdvancesCount: newItems.reduce((acc, curr) => acc + (curr.advances?.length || 0), 0)
+        };
+      });
+
+      // If detail modal is open with an item, keep it live-synced in real-time
+      setActiveSelectedItem((prev) => {
+        if (!prev) return null;
+        const fresh = newItems.find((i) => i.id === prev.id);
+        return fresh || prev;
+      });
+    });
+
+    const unsubReports = ApiClient.subscribeToDamageReports((newReports) => {
+      setDamageReports(newReports);
+    });
+
     const interval = setInterval(() => {
       fetchData(true);
-    }, 8000);
-    return () => clearInterval(interval);
+    }, 10000);
+
+    return () => {
+      unsubItems();
+      unsubReports();
+      clearInterval(interval);
+    };
   }, [fetchData]);
 
   // Handle Login
@@ -211,6 +257,24 @@ export default function App() {
         ? 'En Reparación'
         : 'Pendiente';
     setSyncFeedback(`Reporte de daño actualizado a estado: ${statusLabel}.`);
+    setTimeout(() => setSyncFeedback(null), 4000);
+    await fetchData(true);
+  };
+
+  // Handle Updating Maintenance Item Status directly
+  const handleUpdateItemStatus = async (itemId: string, newStatus: ItemStatus) => {
+    const updated = await ApiClient.updateMaintenanceItem(itemId, { status: newStatus });
+    setActiveSelectedItem(updated);
+    setSyncFeedback(`Estado de ${updated.code} actualizado a ${newStatus} y guardado.`);
+    setTimeout(() => setSyncFeedback(null), 4000);
+    await fetchData(true);
+  };
+
+  // Handle Deleting Maintenance Item
+  const handleDeleteItem = async (itemId: string) => {
+    await ApiClient.deleteMaintenanceItem(itemId);
+    setActiveSelectedItem(null);
+    setSyncFeedback('Registro eliminado de la base de datos Firestore.');
     setTimeout(() => setSyncFeedback(null), 4000);
     await fetchData(true);
   };
@@ -492,6 +556,9 @@ export default function App() {
           setActiveSelectedItem(item);
           setIsProgressModalOpen(true);
         }}
+        onUpdateItemStatus={handleUpdateItemStatus}
+        onDeleteItem={handleDeleteItem}
+        currentUser={currentUser}
       />
 
       {/* 4. Login & Register Modal */}

@@ -179,6 +179,87 @@
         }
       },
       "required": ["id", "itemId", "authorId", "authorName", "authorRole", "date", "note", "statusAfter"]
+    },
+    "DamageReport": {
+      "title": "DamageReport",
+      "description": "Damage reports and breakdown notices across institutional areas.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique damage report ID"
+        },
+        "reportCode": {
+          "type": "string",
+          "description": "Sequential report code (e.g. REP-DAN-101)"
+        },
+        "itemId": {
+          "type": "string",
+          "description": "Related maintenance item ID"
+        },
+        "itemCode": {
+          "type": "string",
+          "description": "Related item code"
+        },
+        "area": {
+          "type": "string",
+          "enum": ["ELECTRICOS", "ESTRUCTURALES", "RECURSOS"],
+          "description": "Institutional area"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title or summary of the damage"
+        },
+        "damageDescription": {
+          "type": "string",
+          "description": "Description of the damage"
+        },
+        "location": {
+          "type": "string",
+          "description": "Specific classroom or institutional space"
+        },
+        "urgency": {
+          "type": "string",
+          "enum": ["URGENTE", "IMPORTANTE", "NADA_URGENTE"],
+          "description": "Priority level"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDIENTE", "EN_REPARACION", "RESUELTO"],
+          "description": "Resolution status"
+        },
+        "reportedBy": {
+          "type": "object",
+          "description": "Staff member who reported the damage"
+        },
+        "assignedTo": {
+          "type": "object",
+          "description": "Technician or person assigned"
+        },
+        "photos": {
+          "type": "array",
+          "description": "Photo evidence URLs"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "resolvedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Resolution timestamp"
+        },
+        "resolvedBy": {
+          "type": "string",
+          "description": "Staff member who resolved the issue"
+        },
+        "solutionNotes": {
+          "type": "string",
+          "description": "Notes describing how the issue was fixed"
+        }
+      },
+      "required": ["id", "reportCode", "area", "title", "damageDescription", "location", "urgency", "status", "reportedBy", "assignedTo", "createdAt"]
     }
   },
   "firestore": {
@@ -199,6 +280,12 @@
         "$ref": "#/entities/ProgressAdvance"
       },
       "description": "Progress advances and technical intervention logs"
+    },
+    "/damage_reports/{reportId}": {
+      "schema": {
+        "$ref": "#/entities/DamageReport"
+      },
+      "description": "Institutional damage and breakdown reports collection"
     }
   }
 }

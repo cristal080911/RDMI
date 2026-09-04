@@ -8,7 +8,8 @@ import {
   deleteDoc,
   query,
   orderBy,
-  where
+  where,
+  onSnapshot
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { MaintenanceItem, DamageReport, User, ProgressAdvance, InstitutionalStats, UserRole, UrgencyLevel, AreaType, ItemStatus } from '../core/domain/entities';
@@ -807,6 +808,27 @@ export class FirebaseDatabaseService {
     };
 
     await updateDoc(docRef, finalUpdates);
+
+    // Synchronize linked damage report status if status was updated
+    if (updates.status) {
+      try {
+        const repQuery = query(collection(db, 'damage_reports'), where('itemId', '==', id));
+        const repSnap = await getDocs(repQuery);
+        for (const repDoc of repSnap.docs) {
+          let repStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' = 'PENDIENTE';
+          if (updates.status === 'NUEVO_OPERATIVO') repStatus = 'RESUELTO';
+          else if (updates.status === 'EN_MANTENIMIENTO') repStatus = 'EN_REPARACION';
+          await updateDoc(repDoc.ref, {
+            status: repStatus,
+            resolvedAt: repStatus === 'RESUELTO' ? new Date().toISOString() : undefined,
+            resolvedBy: repStatus === 'RESUELTO' ? 'Sistema / Mantenimiento' : undefined
+          });
+        }
+      } catch (err) {
+        console.warn('Syncing damage report status warning:', err);
+      }
+    }
+
     return { ...current, ...finalUpdates };
   }
 
@@ -855,6 +877,32 @@ export class FirebaseDatabaseService {
       updatedAt: now
     });
 
+    // Also persist into dedicated advances collection
+    try {
+      await setDoc(doc(db, 'advances', advance.id), advance);
+    } catch (e) {
+      console.warn('Warning saving into advances collection:', e);
+    }
+
+    // Synchronize status in any linked damage report
+    try {
+      const repQuery = query(collection(db, 'damage_reports'), where('itemId', '==', itemId));
+      const repSnap = await getDocs(repQuery);
+      for (const repDoc of repSnap.docs) {
+        let repStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' = 'PENDIENTE';
+        if (updatedStatus === 'NUEVO_OPERATIVO') repStatus = 'RESUELTO';
+        else if (updatedStatus === 'EN_MANTENIMIENTO') repStatus = 'EN_REPARACION';
+        await updateDoc(repDoc.ref, {
+          status: repStatus,
+          resolvedAt: repStatus === 'RESUELTO' ? now : undefined,
+          resolvedBy: repStatus === 'RESUELTO' ? payload.authorName : undefined,
+          solutionNotes: repStatus === 'RESUELTO' ? payload.note : undefined
+        });
+      }
+    } catch (e) {
+      console.warn('Warning syncing linked damage report:', e);
+    }
+
     const updatedItem: MaintenanceItem = {
       ...item,
       advances: updatedAdvances,
@@ -869,6 +917,16 @@ export class FirebaseDatabaseService {
     await this.ensureInitialized();
     try {
       await deleteDoc(doc(db, 'maintenance_items', id));
+      // Also delete or unlink any matching damage report
+      try {
+        const repQuery = query(collection(db, 'damage_reports'), where('itemId', '==', id));
+        const repSnap = await getDocs(repQuery);
+        for (const repDoc of repSnap.docs) {
+          await deleteDoc(repDoc.ref);
+        }
+      } catch (err) {
+        console.warn('Warning deleting linked damage report:', err);
+      }
       return true;
     } catch (e) {
       console.warn('Error deleting item from Firestore:', e);
@@ -1084,5 +1142,90 @@ export class FirebaseDatabaseService {
       console.warn('Error deleting damage report from Firestore:', e);
       return false;
     }
+  }
+
+  // --- REAL-TIME MULTI-USER FIRESTORE SUBSCRIPTIONS ---
+  /**
+   * Real-time subscription to maintenance items.
+   * Emits immediately whenever any user creates, updates, deletes, or adds advances.
+   */
+  static subscribeMaintenanceItems(
+    callback: (items: MaintenanceItem[]) => void,
+    onError?: (error: any) => void
+  ): () => void {
+    const colRef = collection(db, 'maintenance_items');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const items: MaintenanceItem[] = [];
+        snapshot.forEach((d) => {
+          items.push(d.data() as MaintenanceItem);
+        });
+        items.sort(
+          (a, b) =>
+            new Date(b.updatedAt || b.createdAt).getTime() -
+            new Date(a.updatedAt || a.createdAt).getTime()
+        );
+        callback(items);
+      },
+      (err) => {
+        console.warn('Firestore onSnapshot maintenance_items error:', err);
+        if (onError) onError(err);
+      }
+    );
+  }
+
+  /**
+   * Real-time subscription to damage reports.
+   * Emits immediately whenever any user reports damage or marks an incident resolved.
+   */
+  static subscribeDamageReports(
+    callback: (reports: DamageReport[]) => void,
+    onError?: (error: any) => void
+  ): () => void {
+    const colRef = collection(db, 'damage_reports');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const reports: DamageReport[] = [];
+        snapshot.forEach((d) => {
+          reports.push(d.data() as DamageReport);
+        });
+        reports.sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        callback(reports);
+      },
+      (err) => {
+        console.warn('Firestore onSnapshot damage_reports error:', err);
+        if (onError) onError(err);
+      }
+    );
+  }
+
+  /**
+   * Real-time subscription to institutional users.
+   * Emits immediately when accounts register, passwords change, or roles are approved.
+   */
+  static subscribeUsers(
+    callback: (users: FirestoreUserRecord[]) => void,
+    onError?: (error: any) => void
+  ): () => void {
+    const colRef = collection(db, 'users');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const users: FirestoreUserRecord[] = [];
+        snapshot.forEach((d) => {
+          users.push(d.data() as FirestoreUserRecord);
+        });
+        callback(users);
+      },
+      (err) => {
+        console.warn('Firestore onSnapshot users error:', err);
+        if (onError) onError(err);
+      }
+    );
   }
 }

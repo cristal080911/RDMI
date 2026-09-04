@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { MaintenanceItem, ItemStatus, User } from '../core/domain/entities';
+import { MaintenanceService } from '../application/useCases';
 import {
   X,
   Zap,
@@ -13,25 +15,36 @@ import {
   Share2,
   CheckCircle2,
   Clock,
-  Plus
+  Plus,
+  Trash2,
+  Cloud,
+  Check
 } from 'lucide-react';
-import { MaintenanceItem } from '../core/domain/entities';
-import { MaintenanceService } from '../application/useCases';
 
 interface ItemDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   item: MaintenanceItem | null;
   onOpenAdvanceModal: (item: MaintenanceItem) => void;
+  onUpdateItemStatus?: (itemId: string, newStatus: ItemStatus) => Promise<void>;
+  onDeleteItem?: (itemId: string) => Promise<void>;
+  currentUser?: User | null;
 }
 
 export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
   isOpen,
   onClose,
   item,
-  onOpenAdvanceModal
+  onOpenAdvanceModal,
+  onUpdateItemStatus,
+  onDeleteItem,
+  currentUser
 }) => {
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   if (!isOpen || !item) return null;
 
@@ -41,6 +54,34 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleStatusChange = async (newStatus: ItemStatus) => {
+    if (!onUpdateItemStatus || newStatus === item.status) return;
+    setIsUpdatingStatus(true);
+    try {
+      await onUpdateItemStatus(item.id, newStatus);
+      setFeedback(`Estado actualizado a ${newStatus.replace('_', ' ')} y guardado en Firestore.`);
+      setTimeout(() => setFeedback(null), 3000);
+    } catch (e: any) {
+      setFeedback('Error al actualizar el estado.');
+      setTimeout(() => setFeedback(null), 3000);
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!onDeleteItem) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteItem(item.id);
+      onClose();
+    } catch (e: any) {
+      setFeedback('Error al eliminar el elemento.');
+      setIsDeleting(false);
+      setConfirmDelete(false);
+    }
   };
 
   return (
@@ -92,22 +133,79 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
         {/* Content */}
         <div className="p-4 sm:p-6 space-y-5 max-h-[80vh] overflow-y-auto">
           
-          {/* Status & Priority Ribbon */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl bg-[#F5EFE4] border border-[#E3DCBD]">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 font-medium">Estado:</span>
-              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${statusInfo.bgClass} ${statusInfo.textClass} ${statusInfo.borderClass}`}>
-                <span className={`w-2 h-2 rounded-full ${statusInfo.dotColor}`} />
-                {statusInfo.label}
-              </span>
+          {/* Status & Priority Ribbon with Live Updater */}
+          <div className="p-3.5 rounded-2xl bg-[#F5EFE4] border border-[#E3DCBD] space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">Estado actual:</span>
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${statusInfo.bgClass} ${statusInfo.textClass} ${statusInfo.borderClass}`}>
+                  <span className={`w-2 h-2 rounded-full ${statusInfo.dotColor}`} />
+                  {statusInfo.label}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">Prioridad:</span>
+                <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${urgencyInfo.badgeBg} ${urgencyInfo.badgeText}`}>
+                  {urgencyInfo.label}
+                </span>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 font-medium">Prioridad:</span>
-              <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${urgencyInfo.badgeBg} ${urgencyInfo.badgeText}`}>
-                {urgencyInfo.label}
-              </span>
-            </div>
+            {/* Quick Status Changer */}
+            {onUpdateItemStatus && (
+              <div className="pt-2 border-t border-[#E5DEC9] flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-purple-950 flex items-center gap-1">
+                  <Cloud className="w-3.5 h-3.5 text-purple-700" />
+                  <span>Guardar cambio de estado en la nube:</span>
+                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    disabled={isUpdatingStatus || item.status === 'DANADO'}
+                    onClick={() => handleStatusChange('DANADO')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                      item.status === 'DANADO'
+                        ? 'bg-rose-600 text-white border-rose-700 shadow-sm'
+                        : 'bg-white text-rose-700 border-rose-200 hover:bg-rose-50 cursor-pointer'
+                    }`}
+                  >
+                    🔴 Dañado
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isUpdatingStatus || item.status === 'EN_MANTENIMIENTO'}
+                    onClick={() => handleStatusChange('EN_MANTENIMIENTO')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                      item.status === 'EN_MANTENIMIENTO'
+                        ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
+                        : 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50 cursor-pointer'
+                    }`}
+                  >
+                    🟡 En Mantenimiento
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isUpdatingStatus || item.status === 'NUEVO_OPERATIVO'}
+                    onClick={() => handleStatusChange('NUEVO_OPERATIVO')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                      item.status === 'NUEVO_OPERATIVO'
+                        ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm'
+                        : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50 cursor-pointer'
+                    }`}
+                  >
+                    🟢 Nuevo / Operativo
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {feedback && (
+              <div className="p-2 rounded-xl bg-emerald-100 border border-emerald-300 text-emerald-900 text-xs font-semibold flex items-center gap-1.5 animate-in fade-in">
+                <Check className="w-3.5 h-3.5 text-emerald-700" />
+                <span>{feedback}</span>
+              </div>
+            )}
           </div>
 
           {/* Description */}
@@ -245,16 +343,55 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 bg-[#F5EFE4] border-t border-[#ECE5D8] flex items-center justify-between">
-          <span className="text-[11px] text-slate-500">
-            Última actualización: {new Date(item.updatedAt).toLocaleString()}
-          </span>
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors cursor-pointer"
-          >
-            Cerrar Vista
-          </button>
+        <div className="p-4 bg-[#F5EFE4] border-t border-[#ECE5D8] flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-[11px] text-slate-600">
+            <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+            <span className="font-semibold text-emerald-900">Sincronizado en la nube (Firestore)</span>
+            <span className="text-slate-400">•</span>
+            <span>Actualizado: {new Date(item.updatedAt).toLocaleTimeString()}</span>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            {onDeleteItem && (
+              <>
+                {!confirmDelete ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(true)}
+                    className="px-3 py-2 rounded-xl text-rose-700 hover:bg-rose-100 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Eliminar Registro</span>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5 animate-in fade-in">
+                    <button
+                      type="button"
+                      disabled={isDeleting}
+                      onClick={handleDelete}
+                      className="px-3 py-2 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      {isDeleting ? 'Eliminando...' : '¿Confirmar eliminación?'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                      className="px-2.5 py-2 rounded-xl bg-stone-200 hover:bg-stone-300 text-slate-700 text-xs font-bold cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors cursor-pointer"
+            >
+              Cerrar Vista
+            </button>
+          </div>
         </div>
 
       </div>
