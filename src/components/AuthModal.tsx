@@ -20,7 +20,7 @@ import { UserRole, User as UserEntity } from '../core/domain/entities';
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onLogin: (username: string, password: string) => Promise<UserEntity>;
+  onLogin: (username: string, password: string, adminCode?: string) => Promise<UserEntity>;
   onRegister: (payload: {
     username: string;
     email: string;
@@ -30,6 +30,7 @@ interface AuthModalProps {
     roleTitle: string;
     department: string;
     isStudent?: boolean;
+    adminCode?: string;
   }) => Promise<{ message: string }>;
   onOpenPasswordRecovery?: (initialIdentifier?: string) => void;
 }
@@ -46,6 +47,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginAdminCode, setLoginAdminCode] = useState('');
 
   // Register Form State
   const [regUsername, setRegUsername] = useState('');
@@ -63,11 +65,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   if (!isOpen) return null;
 
   // Demo shortcut login
-  const handleQuickLogin = async (username: string, pass: string) => {
+  const handleQuickLogin = async (username: string, pass: string, code?: string) => {
     setError(null);
     setIsSubmitting(true);
     try {
-      await onLogin(username, pass);
+      if (code !== undefined) {
+        setLoginAdminCode(code);
+      }
+      await onLogin(username, pass, code !== undefined ? code : loginAdminCode.trim());
       onClose();
     } catch (err: any) {
       setError(err.message || 'Error al iniciar sesión');
@@ -87,7 +92,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      await onLogin(loginUsername.trim(), loginPassword);
+      await onLogin(loginUsername.trim(), loginPassword, loginAdminCode.trim());
       onClose();
     } catch (err: any) {
       setError(err.message || 'Error al iniciar sesión');
@@ -287,6 +292,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 )}
               </div>
 
+              {/* Administrative Security Code */}
+              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-300 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-amber-950 flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-amber-700" />
+                    <span>Código Administrativo</span>
+                  </label>
+                  <span className="text-[9px] font-bold text-amber-900 bg-amber-200/80 px-1.5 py-0.2 rounded border border-amber-300">
+                    Solo Administrativos
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  value={loginAdminCode}
+                  onChange={(e) => setLoginAdminCode(e.target.value.toUpperCase())}
+                  placeholder="Ej: ADM-2026 (Req. para personal administrativo)"
+                  className="w-full px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-600 focus:outline-none uppercase"
+                />
+                <p className="text-[10px] text-amber-900 leading-tight">
+                  🔒 Cuentas con rol Administrativo están bloqueadas y requieren su código institucional (ej: <strong className="font-mono">ADM-2026</strong>).
+                </p>
+              </div>
+
               <button
                 type="submit"
                 disabled={isSubmitting}
@@ -304,21 +332,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <div className="grid grid-cols-3 gap-1.5">
                   <button
                     type="button"
-                    onClick={() => handleQuickLogin('rectoria', 'password123')}
+                    onClick={() => handleQuickLogin('rectoria', 'password123', '')}
                     className="p-2 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-950 text-center text-[10px] font-bold border border-purple-300 transition-colors cursor-pointer"
                   >
                     👑 Rectora (Superior)
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleQuickLogin('coord.mantenimiento', 'password123')}
+                    onClick={() => handleQuickLogin('coord.mantenimiento', 'password123', 'ADM-2026')}
                     className="p-2 rounded-xl bg-blue-100 hover:bg-blue-200 text-blue-950 text-center text-[10px] font-bold border border-blue-300 transition-colors cursor-pointer"
+                    title="Ingresar con código ADM-2026"
                   >
-                    🛠️ Mantenimiento (Admin)
+                    🛠️ Admin (Con Código)
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleQuickLogin('prof.martinez', 'password123')}
+                    onClick={() => handleQuickLogin('prof.martinez', 'password123', '')}
                     className="p-2 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-950 text-center text-[10px] font-bold border border-emerald-300 transition-colors cursor-pointer"
                   >
                     📚 Docente Ciencias

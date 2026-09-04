@@ -259,6 +259,14 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
                       <p className="text-slate-500 text-[11px] mt-0.5">
                         {user.email} • <span className="font-mono text-purple-950 font-semibold">{user.username}</span> • {user.department}
                       </p>
+                      {user.role === 'ADMINISTRATIVO' && user.adminCode && (
+                        <div className="mt-1 flex items-center gap-1 text-[11px]">
+                          <span className="text-amber-900 font-bold">Código de Desbloqueo:</span>
+                          <span className="font-mono font-black text-amber-950 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
+                            {user.adminCode}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="text-right">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${

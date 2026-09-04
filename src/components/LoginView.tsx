@@ -27,7 +27,7 @@ import {
 import { UserRole, User as UserEntity } from '../core/domain/entities';
 
 interface LoginViewProps {
-  onLogin: (username: string, password: string) => Promise<UserEntity>;
+  onLogin: (username: string, password: string, adminCode?: string) => Promise<UserEntity>;
   onRegister: (payload: {
     username: string;
     email: string;
@@ -37,6 +37,7 @@ interface LoginViewProps {
     roleTitle: string;
     department: string;
     isStudent?: boolean;
+    adminCode?: string;
   }) => Promise<{ success: boolean; message: string; user?: UserEntity }>;
   onOpenArchitectureModal: () => void;
   onOpenPasswordRecovery?: (initialIdentifier?: string) => void;
@@ -55,6 +56,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginAdminCode, setLoginAdminCode] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   // Register Form State
@@ -66,6 +68,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [regRole, setRegRole] = useState<UserRole>('DOCENTE');
   const [regRoleTitle, setRegRoleTitle] = useState('');
   const [regDepartment, setRegDepartment] = useState('');
+  const [regAdminCode, setRegAdminCode] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,12 +80,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
   } | null>(null);
 
   // Demo shortcut login (using standard passwords <= 10 characters)
-  const handleQuickLogin = async (username: string, pass: string) => {
+  const handleQuickLogin = async (username: string, pass: string, code?: string) => {
     setError(null);
     setRegisteredSuccessInfo(null);
     setIsSubmitting(true);
     try {
-      await onLogin(username, pass);
+      if (code !== undefined) {
+        setLoginAdminCode(code);
+      }
+      await onLogin(username, pass, code !== undefined ? code : loginAdminCode.trim());
     } catch (err: any) {
       setError(err.message || 'Error al iniciar sesión');
     } finally {
@@ -108,7 +114,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setRegisteredSuccessInfo(null);
     setIsSubmitting(true);
     try {
-      await onLogin(loginUsername.trim(), loginPassword);
+      await onLogin(loginUsername.trim(), loginPassword, loginAdminCode.trim());
     } catch (err: any) {
       setError(err.message || 'Error al iniciar sesión');
     } finally {
@@ -150,7 +156,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
         name: regName.trim(),
         role: regRole,
         roleTitle: regRoleTitle.trim() || (regRole === 'DOCENTE' ? 'Docente Titular' : regRole === 'ADMINISTRATIVO' ? 'Coordinador Administrativo' : 'Directivo Institucional'),
-        department: regDepartment.trim() || 'Sede Principal'
+        department: regDepartment.trim() || 'Sede Principal',
+        adminCode: regRole === 'ADMINISTRATIVO' ? (regAdminCode.trim().toUpperCase() || undefined) : undefined
       });
 
       setRegisteredSuccessInfo({
@@ -167,6 +174,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       setRegName('');
       setRegRoleTitle('');
       setRegDepartment('');
+      setRegAdminCode('');
       setTab('LOGIN');
     } catch (err: any) {
       setError(err.message || 'Error en el registro institucional');
@@ -414,6 +422,31 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   )}
                 </div>
 
+                {/* Bloque de Código de Seguridad Administrativo */}
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-50/90 to-orange-50/70 border border-amber-300 shadow-sm space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-extrabold text-amber-950 uppercase tracking-wider flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Código de Seguridad Administrativo</span>
+                    </label>
+                    <span className="text-[10px] text-amber-900 font-bold bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300">
+                      🔒 Bloqueo Activo
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={loginAdminCode}
+                      onChange={(e) => setLoginAdminCode(e.target.value.toUpperCase())}
+                      placeholder="Ej: ADM-2026 (Obligatorio solo para personal administrativo)"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-amber-300 text-xs sm:text-sm text-slate-900 font-mono font-bold focus:ring-2 focus:ring-amber-600 focus:outline-none shadow-sm placeholder:text-slate-400 placeholder:font-sans uppercase tracking-wider"
+                    />
+                  </div>
+                  <p className="text-[11px] text-amber-900/90 leading-tight">
+                    🛡️ <strong>Seguridad Estricta:</strong> Las cuentas de funcionarios <strong>ADMINISTRATIVOS</strong> están bloqueadas y solo pueden ingresar con su código de seguridad asignado (ej: <span className="font-mono font-black text-amber-950 bg-amber-200/80 px-1 py-0.2 rounded">ADM-2026</span>). Docentes y Superiores pueden dejar este campo en blanco.
+                  </p>
+                </div>
+
                 <button
                   type="submit"
                   disabled={isSubmitting}
@@ -510,27 +543,77 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   </div>
 
                   <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pt-1">
-                    Otras Cuentas Demo:
+                    Cuentas de Prueba por Rol Institucional:
                   </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleQuickLogin('coord.mantenimiento', 'admin123')}
-                      disabled={isSubmitting}
-                      className="p-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-950 text-left text-xs font-bold border border-blue-200 transition-all cursor-pointer"
-                    >
-                      <span>🛠️ Mantenimiento</span>
-                      <p className="text-[10px] text-blue-700 font-normal">coord.mantenimiento</p>
-                    </button>
+                  <div className="space-y-2">
+                    {/* Cuenta Administrativa con Bloqueo y Código */}
+                    <div className="p-3 rounded-2xl bg-blue-50/90 border border-blue-200 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-1.5 font-bold text-blue-950">
+                            <span>🛠️ Ing. Carlos Ruiz</span>
+                            <span className="text-[10px] text-blue-700 font-mono font-normal">coord.mantenimiento</span>
+                          </div>
+                          <p className="text-[10px] text-blue-800">
+                            Rol: <strong>ADMINISTRATIVO</strong> • Código: <span className="font-mono font-black text-amber-950 bg-amber-100 px-1 py-0.2 rounded border border-amber-300">ADM-2026</span>
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300 flex items-center gap-1">
+                          <Lock className="w-2.5 h-2.5" />
+                          <span>Bloqueo Activo</span>
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLoginUsername('coord.mantenimiento');
+                            setLoginPassword('admin123');
+                            setLoginAdminCode('');
+                            handleQuickLogin('coord.mantenimiento', 'admin123', '');
+                          }}
+                          disabled={isSubmitting}
+                          className="py-1.5 px-2 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-900 text-[11px] font-bold border border-rose-300 transition-colors cursor-pointer text-center flex items-center justify-center gap-1"
+                          title="Prueba que sin el código administrativo el acceso es bloqueado"
+                        >
+                          <span>🚫 Probar Bloqueo</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLoginUsername('coord.mantenimiento');
+                            setLoginPassword('admin123');
+                            setLoginAdminCode('ADM-2026');
+                            handleQuickLogin('coord.mantenimiento', 'admin123', 'ADM-2026');
+                          }}
+                          disabled={isSubmitting}
+                          className="py-1.5 px-2 rounded-xl bg-blue-800 hover:bg-blue-900 text-white text-[11px] font-bold shadow-sm transition-colors cursor-pointer text-center flex items-center justify-center gap-1"
+                          title="Desbloquear e ingresar con el código ADM-2026"
+                        >
+                          <span>🔓 Entrar con Código</span>
+                        </button>
+                      </div>
+                    </div>
 
+                    {/* Cuenta Docente (Sin necesidad de código) */}
                     <button
                       type="button"
-                      onClick={() => handleQuickLogin('prof.martinez', 'admin123')}
+                      onClick={() => {
+                        setLoginUsername('prof.martinez');
+                        setLoginPassword('admin123');
+                        setLoginAdminCode('');
+                        handleQuickLogin('prof.martinez', 'admin123', '');
+                      }}
                       disabled={isSubmitting}
-                      className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-950 text-left text-xs font-bold border border-slate-300 transition-all cursor-pointer"
+                      className="w-full p-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-950 text-left text-xs font-bold border border-slate-300 transition-all cursor-pointer flex items-center justify-between"
                     >
-                      <span>📚 Docente de Aula</span>
-                      <p className="text-[10px] text-slate-700 font-normal">prof.martinez</p>
+                      <div>
+                        <span>📚 Lic. Jorge Martínez (Docente)</span>
+                        <p className="text-[10px] text-slate-600 font-normal">prof.martinez • Sin código requerido</p>
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded-lg border border-slate-300">
+                        Entrar Libre
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -689,6 +772,34 @@ export const LoginView: React.FC<LoginViewProps> = ({
                     </button>
                   </div>
                 </div>
+
+                {/* Aviso especial de seguridad para registro de administrativos */}
+                {regRole === 'ADMINISTRATIVO' && (
+                  <div className="p-3.5 rounded-2xl bg-blue-50/90 border-2 border-blue-200 text-xs text-blue-950 space-y-2">
+                    <div className="flex items-center gap-1.5 font-extrabold text-blue-900">
+                      <ShieldCheck className="w-4 h-4 text-blue-700 shrink-0" />
+                      <span>Política de Bloqueo para Personal Administrativo</span>
+                    </div>
+                    <p className="text-[11px] text-blue-800 leading-relaxed">
+                      Por seguridad institucional, las cuentas de funcionarios administrativos permanecen <strong>bloqueadas</strong> contra accesos no autorizados. Solo se puede ingresar suministrando el <strong>Código de Seguridad Administrativo</strong>.
+                    </p>
+                    <div>
+                      <label className="block text-[11px] font-bold text-blue-950 uppercase tracking-wider mb-1">
+                        Código de Seguridad Administrativo Preferido (Opcional)
+                      </label>
+                      <input
+                        type="text"
+                        value={regAdminCode}
+                        onChange={(e) => setRegAdminCode(e.target.value.toUpperCase())}
+                        placeholder="Ej: ADM-5520 (Dejar en blanco para autogenerar)"
+                        className="w-full px-3 py-1.5 rounded-xl bg-white border border-blue-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none uppercase"
+                      />
+                      <span className="text-[10px] text-blue-700 italic block mt-0.5">
+                        Si lo dejas en blanco, el sistema generará automáticamente un código único como ADM-XXXX.
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>

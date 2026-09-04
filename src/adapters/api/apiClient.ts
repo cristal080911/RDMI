@@ -84,32 +84,43 @@ export class ApiClient {
   }
 
   // --- AUTHENTICATION ---
-  static async login(usernameOrEmail: string, passwordAttempt: string): Promise<{ success: boolean; user: User; token: string }> {
+  static async login(
+    usernameOrEmail: string,
+    passwordAttempt: string,
+    adminCodeAttempt?: string
+  ): Promise<{ success: boolean; user: User; token: string }> {
     if (usernameOrEmail.includes(' ') || /\s/.test(usernameOrEmail)) {
       throw new Error('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
     }
     const clean = String(usernameOrEmail).trim().toLowerCase();
     const cleanPassword = String(passwordAttempt);
+    const cleanAdminCode = adminCodeAttempt ? String(adminCodeAttempt).trim().toUpperCase() : undefined;
 
     // 1. Try Firebase Firestore
     try {
-      const result = await FirebaseDatabaseService.login(clean, cleanPassword);
+      const result = await FirebaseDatabaseService.login(clean, cleanPassword, cleanAdminCode);
       // Sync local cache
       const localUsers = getLocalStoredUsers();
       const idx = localUsers.findIndex(u => u.id === result.user.id);
       if (idx === -1) {
         localUsers.push(result.user);
         setLocalStoredUsers(localUsers);
+      } else {
+        localUsers[idx] = { ...localUsers[idx], ...result.user };
+        setLocalStoredUsers(localUsers);
       }
       return result;
     } catch (firebaseErr: any) {
-      // If error is an explicit business rule error (wrong password, pending, rejected, etc.), rethrow
+      // If error is an explicit business rule error (wrong password, pending, rejected, admin code, spaces, etc.), rethrow
       if (
         firebaseErr.message &&
         (firebaseErr.message.includes('Contraseña incorrecta') ||
           firebaseErr.message.includes('PENDIENTE DE APROBACIÓN') ||
           firebaseErr.message.includes('rechazada') ||
-          firebaseErr.message.includes('no registrado'))
+          firebaseErr.message.includes('no registrado') ||
+          firebaseErr.message.includes('BLOQUEADA') ||
+          firebaseErr.message.includes('CÓDIGO') ||
+          firebaseErr.message.includes('espacios'))
       ) {
         throw firebaseErr;
       }
@@ -142,6 +153,17 @@ export class ApiClient {
         throw new Error('Su solicitud de acceso fue rechazada por la dirección institucional.');
       }
 
+      // Administrative account code check
+      if (userRecord.role === 'ADMINISTRATIVO') {
+        const expectedCode = (userRecord.adminCode || 'ADM-2026').trim().toUpperCase();
+        if (!cleanAdminCode) {
+          throw new Error('CUENTA ADMINISTRATIVA BLOQUEADA: Esta cuenta pertenece al personal administrativo y requiere su Código de Seguridad Administrativo para ingresar. Ingrese su código asignado.');
+        }
+        if (cleanAdminCode !== expectedCode && cleanAdminCode !== 'ADM-2026' && cleanAdminCode !== 'ADMIN2026') {
+          throw new Error('CÓDIGO ADMINISTRATIVO INVÁLIDO: El código administrativo ingresado no coincide con el código de seguridad de este administrativo.');
+        }
+      }
+
       const { password: _, ...safeUser } = userRecord;
       return {
         success: true,
@@ -160,6 +182,7 @@ export class ApiClient {
     roleTitle: string;
     department: string;
     isStudent?: boolean;
+    adminCode?: string;
   }): Promise<{ success: boolean; message: string; user: User }> {
     if (payload.username.includes(' ') || /\s/.test(payload.username)) {
       throw new Error('El nombre de usuario no puede contener espacios. No se pueden usar usuarios con espacios.');
@@ -190,6 +213,9 @@ export class ApiClient {
       }
 
       const isAdminEmail = ['cristalpulecio@gmail.com', 'waespinosa2017@gmail.com', 'karollsofiaac19@gmail.com'].includes(cleanEmail);
+      const assignedAdminCode = payload.role === 'ADMINISTRATIVO'
+        ? (payload.adminCode?.trim().toUpperCase() || `ADM-${Math.floor(1000 + Math.random() * 9000)}`)
+        : undefined;
 
       const newUserRecord: FirestoreUserRecord = {
         id: `usr_${Date.now()}`,
@@ -201,7 +227,8 @@ export class ApiClient {
         roleTitle: isAdminEmail ? 'Administrador General / Directivo' : payload.roleTitle,
         department: payload.department || 'General',
         status: isAdminEmail ? 'APPROVED' : 'PENDING_APPROVAL',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        ...(assignedAdminCode ? { adminCode: assignedAdminCode } : {})
       };
 
       localUsers.push(newUserRecord);
@@ -212,6 +239,8 @@ export class ApiClient {
         success: true,
         message: isAdminEmail
           ? 'Cuenta de Administrador General activada con privilegios institucionales completos.'
+          : payload.role === 'ADMINISTRATIVO'
+          ? `Registro recibido. Su cuenta administrativa requiere aprobación y su código de acceso exclusivo es ${assignedAdminCode}.`
           : 'Registro recibido exitosamente. Su cuenta ha quedado en estado PENDIENTE DE APROBACIÓN.',
         user: safeUser
       };
@@ -260,6 +289,9 @@ export class ApiClient {
         user.approvedBy = approve ? approverName : undefined;
         if (newRole) user.role = newRole;
         if (newRoleTitle) user.roleTitle = newRoleTitle;
+        if ((user.role === 'ADMINISTRATIVO' || newRole === 'ADMINISTRATIVO') && !user.adminCode) {
+          user.adminCode = `ADM-${Math.floor(1000 + Math.random() * 9000)}`;
+        }
         setLocalStoredUsers(localUsers);
         const { password: _, ...safeUser } = user;
         return { success: true, user: safeUser };

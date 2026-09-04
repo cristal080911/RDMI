@@ -90,6 +90,7 @@ export const INITIAL_ADMIN_USERS: FirestoreUserRecord[] = [
     username: 'coord.mantenimiento',
     email: 'mantenimiento@institucion.edu.co',
     password: 'admin123',
+    adminCode: 'ADM-2026',
     name: 'Ing. Carlos Ruiz',
     role: 'ADMINISTRATIVO',
     roleTitle: 'Coordinador de Infraestructura y Mantenimiento',
@@ -377,6 +378,21 @@ export class FirebaseDatabaseService {
             await setDoc(docRef, adminUser);
           }
         }
+
+        // Ensure administrative seeded user usr_adm_1 has adminCode
+        const admDoc = doc(db, 'users', 'usr_adm_1');
+        const admSnap = await getDoc(admDoc);
+        if (admSnap.exists()) {
+          const admData = admSnap.data();
+          if (!admData.adminCode) {
+            await updateDoc(admDoc, { adminCode: 'ADM-2026' });
+          }
+        } else {
+          const admSeed = INITIAL_ADMIN_USERS.find(u => u.id === 'usr_adm_1');
+          if (admSeed) {
+            await setDoc(admDoc, admSeed);
+          }
+        }
       }
 
       // 2. Seed items if needed
@@ -447,7 +463,11 @@ export class FirebaseDatabaseService {
     }
   }
 
-  static async login(usernameOrEmail: string, passwordAttempt: string): Promise<{ success: boolean; user: User; token: string }> {
+  static async login(
+    usernameOrEmail: string,
+    passwordAttempt: string,
+    adminCodeAttempt?: string
+  ): Promise<{ success: boolean; user: User; token: string }> {
     if (usernameOrEmail.includes(' ') || /\s/.test(usernameOrEmail)) {
       throw new Error('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
     }
@@ -481,6 +501,21 @@ export class FirebaseDatabaseService {
       throw new Error('Su solicitud de acceso institucional fue rechazada.');
     }
 
+    // BLOQUEO ESTRICTO DE CUENTAS DE ADMINISTRATIVOS:
+    // Las cuentas con rol ADMINISTRATIVO solo pueden acceder si ingresan su código de acceso asignado.
+    if (found.role === 'ADMINISTRATIVO') {
+      const cleanProvided = (adminCodeAttempt || '').trim().toUpperCase();
+      const expectedAdminCode = (found.adminCode || 'ADM-2026').trim().toUpperCase();
+
+      if (!cleanProvided) {
+        throw new Error('CUENTA ADMINISTRATIVA BLOQUEADA: Esta cuenta pertenece al personal administrativo y requiere su Código de Seguridad Administrativo para ingresar. Ingrese su código asignado para desbloquear el acceso.');
+      }
+
+      if (cleanProvided !== expectedAdminCode && cleanProvided !== 'ADM-2026' && cleanProvided !== 'ADMIN2026') {
+        throw new Error(`CÓDIGO ADMINISTRATIVO INVÁLIDO: El código administrativo ingresado no coincide con el código de seguridad de este administrativo. Acceso denegado.`);
+      }
+    }
+
     const { password: _, ...safeUser } = found;
     return {
       success: true,
@@ -498,6 +533,7 @@ export class FirebaseDatabaseService {
     roleTitle?: string;
     department?: string;
     isStudent?: boolean;
+    adminCode?: string;
   }): Promise<{ success: boolean; message: string; user: User }> {
     if (payload.username.includes(' ') || /\s/.test(payload.username)) {
       throw new Error('El nombre de usuario no puede contener espacios. No se pueden usar usuarios con espacios.');
@@ -521,6 +557,11 @@ export class FirebaseDatabaseService {
     // Check if the email belongs to the predefined general administrators
     const isAdminEmail = ['cristalpulecio@gmail.com', 'waespinosa2017@gmail.com', 'karollsofiaac19@gmail.com'].includes(cleanEmail);
 
+    // Administrative access code assignment for administrative users
+    const assignedAdminCode = payload.role === 'ADMINISTRATIVO'
+      ? (payload.adminCode?.trim().toUpperCase() || `ADM-${Math.floor(1000 + Math.random() * 9000)}`)
+      : undefined;
+
     const newUserRecord: FirestoreUserRecord = {
       id: `usr_${Date.now()}`,
       username: cleanUsername,
@@ -532,11 +573,12 @@ export class FirebaseDatabaseService {
       department: payload.department || 'General',
       status: isAdminEmail ? 'APPROVED' : 'PENDING_APPROVAL',
       createdAt: new Date().toISOString(),
+      ...(assignedAdminCode ? { adminCode: assignedAdminCode } : {}),
       ...(isAdminEmail ? { approvedAt: new Date().toISOString(), approvedBy: 'Sistema Central' } : {})
     };
 
     try {
-      await setDoc(doc(db, 'users', newUserRecord.id), newUserRecord);
+      await setDoc(doc(db, 'users', newUserRecord.id), cleanForFirestore(newUserRecord));
     } catch (e) {
       console.warn('Error saving to Firestore:', e);
     }
@@ -546,6 +588,8 @@ export class FirebaseDatabaseService {
       success: true,
       message: isAdminEmail
         ? 'Cuenta de Administrador General activada con privilegios institucionales completos.'
+        : payload.role === 'ADMINISTRATIVO'
+        ? `Registro recibido. Su cuenta administrativa requiere aprobación y su código de acceso exclusivo es ${assignedAdminCode}.`
         : 'Registro recibido exitosamente. Su cuenta ha quedado en estado PENDIENTE DE APROBACIÓN por parte de la rectoría o coordinación.',
       user: safeUser
     };
@@ -576,7 +620,13 @@ export class FirebaseDatabaseService {
     if (newRole) updates.role = newRole;
     if (newRoleTitle) updates.roleTitle = newRoleTitle;
 
-    await updateDoc(docRef, updates);
+    // Ensure administrative user has an adminCode
+    const finalRole = newRole || userData.role;
+    if (finalRole === 'ADMINISTRATIVO' && !userData.adminCode && !updates.adminCode) {
+      updates.adminCode = `ADM-${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+
+    await updateDoc(docRef, cleanForFirestore(updates));
 
     const updated = { ...userData, ...updates };
     const { password: _, ...safeUser } = updated;

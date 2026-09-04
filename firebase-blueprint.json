@@ -53,6 +53,10 @@
         "approvedBy": {
           "type": "string",
           "description": "Name of director or administrator who approved account"
+        },
+        "adminCode": {
+          "type": "string",
+          "description": "Unique security access code required to unlock and log in to administrative accounts"
         }
       },
       "required": ["id", "username", "email", "name", "role", "status", "createdAt"]

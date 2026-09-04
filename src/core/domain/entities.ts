@@ -19,6 +19,7 @@ export interface User {
   createdAt: string;
   approvedAt?: string;
   approvedBy?: string;
+  adminCode?: string; // Código de seguridad exclusivo para desbloqueo y acceso de administrativos
 }
 
 export type AreaType = 'ELECTRICOS' | 'ESTRUCTURALES' | 'RECURSOS';

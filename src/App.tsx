@@ -185,8 +185,8 @@ export default function App() {
   }, [fetchData]);
 
   // Handle Login
-  const handleLogin = async (username: string, pass: string) => {
-    const res = await ApiClient.login(username, pass);
+  const handleLogin = async (username: string, pass: string, adminCode?: string) => {
+    const res = await ApiClient.login(username, pass, adminCode);
     setCurrentUser(res.user);
     localStorage.setItem('sigma_institutional_user', JSON.stringify(res.user));
     await fetchData();
