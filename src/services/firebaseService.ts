@@ -11,7 +11,8 @@ import {
   where
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { MaintenanceItem, User, ProgressAdvance, InstitutionalStats, UserRole, UrgencyLevel, AreaType, ItemStatus } from '../core/domain/entities';
+import { MaintenanceItem, DamageReport, User, ProgressAdvance, InstitutionalStats, UserRole, UrgencyLevel, AreaType, ItemStatus } from '../core/domain/entities';
+import { EmailNotificationService } from './emailNotificationService';
 
 export interface FirestoreUserRecord extends User {
   password?: string;
@@ -400,6 +401,9 @@ export class FirebaseDatabaseService {
   }
 
   static async login(usernameOrEmail: string, passwordAttempt: string): Promise<{ success: boolean; user: User; token: string }> {
+    if (usernameOrEmail.includes(' ') || /\s/.test(usernameOrEmail)) {
+      throw new Error('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
+    }
     await this.ensureInitialized();
     const clean = String(usernameOrEmail).trim().toLowerCase();
     const users = await this.getUsers();
@@ -448,6 +452,9 @@ export class FirebaseDatabaseService {
     department?: string;
     isStudent?: boolean;
   }): Promise<{ success: boolean; message: string; user: User }> {
+    if (payload.username.includes(' ') || /\s/.test(payload.username)) {
+      throw new Error('El nombre de usuario no puede contener espacios. No se pueden usar usuarios con espacios.');
+    }
     await this.ensureInitialized();
     const cleanUsername = String(payload.username).trim().toLowerCase();
     const cleanEmail = String(payload.email).trim().toLowerCase();
@@ -566,9 +573,23 @@ export class FirebaseDatabaseService {
     }
 
     const { password: _, ...safeUser } = updatedRecord;
+
+    // Send institutional security email notification
+    try {
+      await EmailNotificationService.sendSecurityEmailNotification({
+        type: 'PASSWORD_RESET',
+        toEmail: safeUser.email,
+        recipientName: safeUser.name,
+        recipientUsername: safeUser.username,
+        roleTitle: safeUser.roleTitle
+      });
+    } catch (emailErr) {
+      console.warn('Could not dispatch security email notification:', emailErr);
+    }
+
     return {
       success: true,
-      message: `Contraseña actualizada con éxito para ${safeUser.name}. Ya puede ingresar con su nueva clave.`,
+      message: `Contraseña actualizada con éxito para ${safeUser.name}. Se ha enviado una notificación de seguridad a ${safeUser.email}.`,
       user: safeUser
     };
   }
@@ -613,9 +634,22 @@ export class FirebaseDatabaseService {
       await setDoc(userDocRef, { ...found, password: cleanNewPass }, { merge: true });
     }
 
+    // Send institutional security email notification
+    try {
+      await EmailNotificationService.sendSecurityEmailNotification({
+        type: 'PASSWORD_CHANGED',
+        toEmail: found.email,
+        recipientName: found.name,
+        recipientUsername: found.username,
+        roleTitle: found.roleTitle
+      });
+    } catch (emailErr) {
+      console.warn('Could not dispatch security email notification on change:', emailErr);
+    }
+
     return {
       success: true,
-      message: 'Su contraseña ha sido modificada y guardada exitosamente.'
+      message: `Su contraseña ha sido modificada exitosamente. Se ha enviado una confirmación formal a su correo institucional (${found.email}).`
     };
   }
 
@@ -729,6 +763,27 @@ export class FirebaseDatabaseService {
 
     try {
       await setDoc(doc(db, 'maintenance_items', newItem.id), newItem);
+
+      // If registered as damaged, also automatically record in dedicated damage_reports collection
+      if (newItem.status === 'DANADO') {
+        const damageRep: DamageReport = {
+          id: `rep_dan_${newItem.id}`,
+          reportCode: `REP-DAN-${count}`,
+          itemId: newItem.id,
+          itemCode: newItem.code,
+          area: newItem.area,
+          title: newItem.title,
+          damageDescription: newItem.description,
+          location: newItem.location,
+          urgency: newItem.urgency,
+          status: 'PENDIENTE',
+          reportedBy: newItem.reportedBy,
+          assignedTo: newItem.assignedTo,
+          photos: newItem.photos || [],
+          createdAt: now
+        };
+        await setDoc(doc(db, 'damage_reports', damageRep.id), damageRep);
+      }
     } catch (e) {
       console.warn('Error creating item in Firestore:', e);
     }
@@ -849,5 +904,185 @@ export class FirebaseDatabaseService {
       recentAdvancesCount,
       pendingApprovalsCount
     };
+  }
+
+  // --- SEPARATE DAMAGE REPORTS PERSISTENCE & MANAGEMENT ---
+  static async getDamageReports(filters?: {
+    area?: AreaType | 'ALL';
+    urgency?: UrgencyLevel | 'ALL';
+    status?: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' | 'ALL';
+    search?: string;
+  }): Promise<DamageReport[]> {
+    await this.ensureInitialized();
+    try {
+      const snap = await getDocs(collection(db, 'damage_reports'));
+      let reports: DamageReport[] = [];
+
+      if (snap.empty) {
+        // Build initial damage reports list from existing damaged/in maintenance items
+        const items = await this.getMaintenanceItems();
+        const damagedItems = items.filter(i => i.status === 'DANADO' || i.status === 'EN_MANTENIMIENTO');
+        reports = damagedItems.map((item, index) => ({
+          id: `rep_dan_${item.id}`,
+          reportCode: `REP-DAN-${100 + index + 1}`,
+          itemId: item.id,
+          itemCode: item.code,
+          area: item.area,
+          title: item.title,
+          damageDescription: item.description,
+          location: item.location,
+          urgency: item.urgency,
+          status: item.status === 'DANADO' ? 'PENDIENTE' : 'EN_REPARACION',
+          reportedBy: item.reportedBy,
+          assignedTo: item.assignedTo,
+          photos: item.photos || [],
+          createdAt: item.createdAt,
+          solutionNotes: item.notes
+        }));
+
+        // Persist them into Firestore collection
+        for (const rep of reports) {
+          try {
+            await setDoc(doc(db, 'damage_reports', rep.id), rep);
+          } catch (err) {
+            console.warn('Could not seed damage report:', err);
+          }
+        }
+      } else {
+        reports = snap.docs.map(d => d.data() as DamageReport);
+      }
+
+      // Sort by createdAt descending
+      reports.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      // Filter in-memory
+      if (filters?.area && filters.area !== 'ALL') {
+        reports = reports.filter(r => r.area === filters.area);
+      }
+      if (filters?.urgency && filters.urgency !== 'ALL') {
+        reports = reports.filter(r => r.urgency === filters.urgency);
+      }
+      if (filters?.status && filters.status !== 'ALL') {
+        reports = reports.filter(r => r.status === filters.status);
+      }
+      if (filters?.search && filters.search.trim()) {
+        const q = filters.search.toLowerCase().trim();
+        reports = reports.filter(r =>
+          r.title.toLowerCase().includes(q) ||
+          r.reportCode.toLowerCase().includes(q) ||
+          (r.itemCode && r.itemCode.toLowerCase().includes(q)) ||
+          r.damageDescription.toLowerCase().includes(q) ||
+          r.location.toLowerCase().includes(q) ||
+          r.assignedTo.name.toLowerCase().includes(q) ||
+          r.reportedBy.name.toLowerCase().includes(q)
+        );
+      }
+
+      return reports;
+    } catch (e) {
+      console.warn('Error fetching damage reports from Firestore:', e);
+      return [];
+    }
+  }
+
+  static async createDamageReport(report: {
+    area: AreaType;
+    title: string;
+    damageDescription: string;
+    location: string;
+    urgency: UrgencyLevel;
+    reportedBy: { id: string; name: string; role: UserRole; roleTitle: string; email?: string };
+    assignedTo: { name: string; cargo: string; phone?: string; email?: string };
+    photos?: string[];
+    itemId?: string;
+    itemCode?: string;
+  }): Promise<DamageReport> {
+    await this.ensureInitialized();
+    const existing = await this.getDamageReports();
+    const count = existing.length + 101;
+    const reportCode = `REP-DAN-${count}`;
+    const now = new Date().toISOString();
+    const id = `rep_dan_${Date.now()}`;
+
+    const newReport: DamageReport = {
+      id,
+      reportCode,
+      itemId: report.itemId,
+      itemCode: report.itemCode,
+      area: report.area,
+      title: report.title.trim(),
+      damageDescription: report.damageDescription.trim(),
+      location: report.location.trim(),
+      urgency: report.urgency,
+      status: 'PENDIENTE',
+      reportedBy: report.reportedBy,
+      assignedTo: report.assignedTo,
+      photos: report.photos || [],
+      createdAt: now
+    };
+
+    try {
+      await setDoc(doc(db, 'damage_reports', newReport.id), newReport);
+    } catch (e) {
+      console.warn('Error saving damage report in Firestore:', e);
+    }
+
+    return newReport;
+  }
+
+  static async updateDamageReportStatus(
+    id: string,
+    newStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO',
+    solutionNotes?: string,
+    resolvedBy?: string
+  ): Promise<DamageReport> {
+    await this.ensureInitialized();
+    const docRef = doc(db, 'damage_reports', id);
+    const snap = await getDoc(docRef);
+
+    if (!snap.exists()) {
+      throw new Error('Reporte de daño no encontrado.');
+    }
+
+    const current = snap.data() as DamageReport;
+    const updates: Partial<DamageReport> = {
+      status: newStatus,
+      solutionNotes: solutionNotes !== undefined ? solutionNotes : current.solutionNotes,
+      resolvedAt: newStatus === 'RESUELTO' ? new Date().toISOString() : current.resolvedAt,
+      resolvedBy: newStatus === 'RESUELTO' && resolvedBy ? resolvedBy : current.resolvedBy
+    };
+
+    try {
+      await updateDoc(docRef, updates);
+    } catch (e) {
+      console.warn('Error updating damage report in Firestore:', e);
+    }
+
+    // Also update associated item if exists
+    if (current.itemId) {
+      try {
+        const itemStatus: ItemStatus = newStatus === 'RESUELTO'
+          ? 'NUEVO_OPERATIVO'
+          : newStatus === 'EN_REPARACION'
+          ? 'EN_MANTENIMIENTO'
+          : 'DANADO';
+        await this.updateMaintenanceItem(current.itemId, { status: itemStatus });
+      } catch (err) {
+        console.warn('Could not sync item status:', err);
+      }
+    }
+
+    return { ...current, ...updates };
+  }
+
+  static async deleteDamageReport(id: string): Promise<boolean> {
+    await this.ensureInitialized();
+    try {
+      await deleteDoc(doc(db, 'damage_reports', id));
+      return true;
+    } catch (e) {
+      console.warn('Error deleting damage report from Firestore:', e);
+      return false;
+    }
   }
 }

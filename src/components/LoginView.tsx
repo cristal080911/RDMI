@@ -20,7 +20,9 @@ import {
   ShieldCheck,
   Info,
   Eye,
-  EyeOff
+  EyeOff,
+  ChevronRight,
+  AlertCircle
 } from 'lucide-react';
 import { UserRole, User as UserEntity } from '../core/domain/entities';
 
@@ -38,13 +40,15 @@ interface LoginViewProps {
   }) => Promise<{ success: boolean; message: string; user?: UserEntity }>;
   onOpenArchitectureModal: () => void;
   onOpenPasswordRecovery?: (initialIdentifier?: string) => void;
+  onOpenHelpModal?: () => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
   onLogin,
   onRegister,
   onOpenArchitectureModal,
-  onOpenPasswordRecovery
+  onOpenPasswordRecovery,
+  onOpenHelpModal
 }) => {
   const [tab, setTab] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
 
@@ -92,6 +96,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
       setError('Por favor ingrese su usuario o correo y su contraseña.');
       return;
     }
+    if (loginUsername.includes(' ') || /\s/.test(loginUsername)) {
+      setError('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
+      return;
+    }
     if (loginPassword.length > 10) {
       setError('La contraseña no puede exceder el límite de 10 dígitos o caracteres.');
       return;
@@ -115,6 +123,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
     if (!regUsername.trim() || !regEmail.trim() || !regPassword || !regName.trim()) {
       setError('Por favor diligencie todos los campos obligatorios (*).');
+      return;
+    }
+
+    if (regUsername.includes(' ') || /\s/.test(regUsername)) {
+      setError('El nombre de usuario no puede contener espacios. No se pueden usar usuarios con espacios. Por favor ingrese un formato continuo (ej: j.martinez, pedrogomez o prof_ruiz).');
       return;
     }
 
@@ -182,13 +195,26 @@ export const LoginView: React.FC<LoginViewProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={onOpenArchitectureModal}
-          className="px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white text-xs font-semibold border border-indigo-700/50 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
-        >
-          <Layers className="w-4 h-4 text-indigo-400" />
-          <span className="hidden sm:inline">Arquitectura Hexagonal</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenHelpModal && (
+            <button
+              onClick={onOpenHelpModal}
+              title="Abrir guía de ayuda: ¿Cómo manejar y usar la aplicación?"
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-700 hover:to-teal-700 text-emerald-100 hover:text-white text-xs font-bold border border-emerald-500/50 flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-emerald-950/40"
+            >
+              <HelpCircle className="w-4 h-4 text-emerald-300" />
+              <span>Ayuda / Guía de Uso</span>
+            </button>
+          )}
+
+          <button
+            onClick={onOpenArchitectureModal}
+            className="px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white text-xs font-semibold border border-indigo-700/50 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+          >
+            <Layers className="w-4 h-4 text-indigo-400" />
+            <span className="hidden sm:inline">Arquitectura Hexagonal</span>
+          </button>
+        </div>
       </header>
 
       {/* Main Authentication Center Box */}
@@ -213,6 +239,24 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <AlertOctagon className="w-4 h-4 text-rose-600 shrink-0" />
             <span>Acceso de uso exclusivo para personal institucional. Prohibido el ingreso de estudiantes.</span>
           </div>
+
+          {/* Quick Help Guide Banner */}
+          {onOpenHelpModal && (
+            <div className="bg-emerald-50/90 border-b border-emerald-200 px-4 py-2 flex items-center justify-between text-xs text-emerald-950 font-medium">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span>¿Primera vez aquí? Aprende a manejar la app:</span>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenHelpModal}
+                className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] transition-colors cursor-pointer shadow-sm flex items-center gap-1"
+              >
+                <span>Ver Guía de Ayuda</span>
+                <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
 
           {/* Tab Navigation: Iniciar Sesión / Registrarse */}
           <div className="grid grid-cols-2 p-2 bg-[#F2ECE0] border-b border-[#E3DCBD] gap-1.5">
@@ -280,20 +324,45 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 
                 <div>
-                  <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-1.5">
-                    Usuario o Correo Institucional *
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                      Usuario o Correo Institucional *
+                    </label>
+                    {loginUsername.includes(' ') && (
+                      <span className="text-[10px] text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                        ⚠️ Sin espacios
+                      </span>
+                    )}
+                  </div>
                   <div className="relative">
                     <User className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       required
                       value={loginUsername}
-                      onChange={(e) => setLoginUsername(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setLoginUsername(val);
+                        if (val.includes(' ')) {
+                          setError('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
+                        } else if (error && error.includes('espacio')) {
+                          setError(null);
+                        }
+                      }}
                       placeholder="ej: rectoria o j.martinez@institucion.edu.co"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm placeholder:text-slate-400"
+                      className={`w-full pl-10 pr-3 py-2.5 rounded-2xl bg-white border text-xs sm:text-sm text-slate-900 focus:ring-2 focus:outline-none shadow-sm placeholder:text-slate-400 ${
+                        loginUsername.includes(' ')
+                          ? 'border-rose-400 focus:ring-rose-500 bg-rose-50/40 text-rose-900'
+                          : 'border-[#DDD5C2] focus:ring-purple-700'
+                      }`}
                     />
                   </div>
+                  {loginUsername.includes(' ') && (
+                    <p className="mt-1 text-[11px] font-bold text-rose-700 flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>Error: El nombre de usuario no puede contener espacios. No se puede usar usuarios con espacio.</span>
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -494,17 +563,40 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
-                    <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-1">
-                      Nombre de Usuario *
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                        Nombre de Usuario *
+                      </label>
+                      <span className={`text-[10px] font-semibold ${regUsername.includes(' ') ? 'text-rose-600 font-bold' : 'text-slate-500'}`}>
+                        {regUsername.includes(' ') ? '⚠️ Sin espacios' : 'Sin espacios'}
+                      </span>
+                    </div>
                     <input
                       type="text"
                       required
                       value={regUsername}
-                      onChange={(e) => setRegUsername(e.target.value)}
-                      placeholder="ej: p.gomez"
-                      className="w-full px-3.5 py-2 rounded-xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-emerald-600 focus:outline-none shadow-sm"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setRegUsername(val);
+                        if (val.includes(' ')) {
+                          setError('El nombre de usuario no puede contener espacios. No se pueden usar usuarios con espacios.');
+                        } else if (error && error.includes('espacio')) {
+                          setError(null);
+                        }
+                      }}
+                      placeholder="ej: p.gomez o pedrogomez"
+                      className={`w-full px-3.5 py-2 rounded-xl bg-white border text-xs sm:text-sm text-slate-900 focus:ring-2 focus:outline-none shadow-sm ${
+                        regUsername.includes(' ')
+                          ? 'border-rose-400 focus:ring-rose-500 bg-rose-50/40 text-rose-900'
+                          : 'border-[#DDD5C2] focus:ring-emerald-600'
+                      }`}
                     />
+                    {regUsername.includes(' ') && (
+                      <p className="mt-1 text-[11px] font-bold text-rose-700 flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-600" />
+                        <span>Error: El nombre de usuario no puede contener espacios. No se puede usar usuarios con espacio.</span>
+                      </p>
+                    )}
                   </div>
 
                   <div>

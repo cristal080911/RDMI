@@ -24,6 +24,7 @@ import {
 
 import {
   MaintenanceItem,
+  DamageReport,
   AreaType,
   ItemStatus,
   UrgencyLevel,
@@ -35,6 +36,7 @@ import { MaintenanceService } from './application/useCases';
 
 import { Navbar } from './components/Navbar';
 import { StatsDashboard } from './components/StatsDashboard';
+import { DamageReportsSection } from './components/DamageReportsSection';
 import { AreaTableView } from './components/AreaTableView';
 import { NewIncidentModal } from './components/NewIncidentModal';
 import { ProgressModal } from './components/ProgressModal';
@@ -44,7 +46,9 @@ import { SuperiorApprovalPanel } from './components/SuperiorApprovalPanel';
 import { HexagonalArchitectureModal } from './components/HexagonalArchitectureModal';
 import { AuthorizedPersonnelModal } from './components/AuthorizedPersonnelModal';
 import { PasswordManagementModal } from './components/PasswordManagementModal';
+import { HelpGuideModal } from './components/HelpGuideModal';
 import { LoginView } from './components/LoginView';
+import { ReportsTableModal } from './components/ReportsTableModal';
 
 export default function App() {
   // Authentication State: defaults to null if not stored in localStorage
@@ -62,6 +66,7 @@ export default function App() {
 
   // Maintenance Data State
   const [items, setItems] = useState<MaintenanceItem[]>([]);
+  const [damageReports, setDamageReports] = useState<DamageReport[]>([]);
   const [stats, setStats] = useState<InstitutionalStats>({
     totalItems: 0,
     byArea: { electricos: 0, estructurales: 0, recursos: 0 },
@@ -78,6 +83,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Modals Visibility State
+  const [isReportsTableModalOpen, setIsReportsTableModalOpen] = useState(false);
   const [isNewIncidentOpen, setIsNewIncidentOpen] = useState(false);
   const [isProgressModalOpen, setIsProgressModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -87,6 +93,7 @@ export default function App() {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [passwordModalMode, setPasswordModalMode] = useState<'RECOVER' | 'CHANGE'>('RECOVER');
   const [isArchitectureModalOpen, setIsArchitectureModalOpen] = useState(false);
+  const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
 
   // Selected Item for Detail / Advance Modal
   const [activeSelectedItem, setActiveSelectedItem] = useState<MaintenanceItem | null>(null);
@@ -100,12 +107,16 @@ export default function App() {
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setIsRefreshing(true);
     try {
-      const [fetchedItems, fetchedStats] = await Promise.all([
+      const [fetchedItems, fetchedStats, fetchedDamageReports] = await Promise.all([
         ApiClient.getMaintenanceItems(),
-        ApiClient.getStats()
+        ApiClient.getStats(),
+        ApiClient.getDamageReports()
       ]);
       if (Array.isArray(fetchedItems)) {
         setItems(fetchedItems);
+      }
+      if (Array.isArray(fetchedDamageReports)) {
+        setDamageReports(fetchedDamageReports);
       }
       if (fetchedStats && typeof fetchedStats === 'object') {
         setStats(fetchedStats);
@@ -181,6 +192,29 @@ export default function App() {
     await fetchData();
   };
 
+  // Handle Updating Damage Report Status
+  const handleUpdateDamageReportStatus = async (
+    reportId: string,
+    newStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO',
+    solutionNotes?: string
+  ) => {
+    await ApiClient.updateDamageReportStatus(
+      reportId,
+      newStatus,
+      solutionNotes,
+      currentUser?.name
+    );
+    const statusLabel =
+      newStatus === 'RESUELTO'
+        ? 'Solucionado'
+        : newStatus === 'EN_REPARACION'
+        ? 'En Reparación'
+        : 'Pendiente';
+    setSyncFeedback(`Reporte de daño actualizado a estado: ${statusLabel}.`);
+    setTimeout(() => setSyncFeedback(null), 4000);
+    await fetchData(true);
+  };
+
   // Handle Superior User Approval
   const handleApproveUser = async (userId: string, approve: boolean, newRole?: any) => {
     await ApiClient.approveUser(userId, approve, currentUser?.name || 'Directivo Superior', newRole);
@@ -195,6 +229,18 @@ export default function App() {
     return { pending, all };
   };
 
+  // Handle Select / Reset to General Management (Showing all records across all areas)
+  const handleSelectGeneral = () => {
+    setActiveArea('ALL');
+    setSelectedStatus('ALL');
+    setSelectedUrgency('ALL');
+    setSearchQuery('');
+    const el = document.getElementById('institutional-maintenance-table-view');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   // IF NOT AUTHENTICATED: Display the Institutional Login & Registration Screen First
   if (!currentUser) {
     return (
@@ -203,6 +249,7 @@ export default function App() {
           onLogin={handleLogin}
           onRegister={handleRegister}
           onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
+          onOpenHelpModal={() => setIsHelpModalOpen(true)}
           onOpenPasswordRecovery={() => {
             setPasswordModalMode('RECOVER');
             setIsPasswordModalOpen(true);
@@ -218,6 +265,10 @@ export default function App() {
           isOpen={isArchitectureModalOpen}
           onClose={() => setIsArchitectureModalOpen(false)}
         />
+        <HelpGuideModal
+          isOpen={isHelpModalOpen}
+          onClose={() => setIsHelpModalOpen(false)}
+        />
       </>
     );
   }
@@ -232,6 +283,8 @@ export default function App() {
         activeArea={activeArea}
         onSelectArea={(area) => setActiveArea(area)}
         onOpenNewIncident={() => setIsNewIncidentOpen(true)}
+        onOpenReportsTable={() => setIsReportsTableModalOpen(true)}
+        damageReportsCount={damageReports.length}
         onOpenApprovalPanel={() => setIsApprovalPanelOpen(true)}
         onOpenPrintAuthorizedModal={() => setIsAuthorizedPersonnelModalOpen(true)}
         onOpenPasswordModal={() => {
@@ -239,6 +292,7 @@ export default function App() {
           setIsPasswordModalOpen(true);
         }}
         onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
+        onOpenHelpModal={() => setIsHelpModalOpen(true)}
         onLogout={handleLogout}
         onOpenLogin={() => setIsAuthModalOpen(true)}
         pendingApprovalsCount={stats.pendingApprovalsCount}
@@ -325,6 +379,26 @@ export default function App() {
           stats={stats}
           onFilterByStatus={(st) => setSelectedStatus(st)}
           onSelectArea={(ar) => setActiveArea(ar)}
+          onSelectGeneral={handleSelectGeneral}
+          activeStatus={selectedStatus}
+          activeArea={activeArea}
+        />
+
+        {/* Dedicated Damage Reports Section (Separate List Stored & Displayed Above the Tables) */}
+        <DamageReportsSection
+          damageReports={damageReports}
+          onOpenNewIncident={() => setIsNewIncidentOpen(true)}
+          onUpdateReportStatus={handleUpdateDamageReportStatus}
+          onViewItemDetail={(itemId) => {
+            const found = items.find((i) => i.id === itemId);
+            if (found) {
+              setActiveSelectedItem(found);
+              setIsDetailModalOpen(true);
+            }
+          }}
+          currentUser={currentUser}
+          onRefresh={() => fetchData()}
+          isRefreshing={isRefreshing}
         />
 
         {/* Interactive Maintenance Tables (Beige Container) */}
@@ -347,6 +421,7 @@ export default function App() {
           }}
           onOpenNewIncident={() => setIsNewIncidentOpen(true)}
           currentUser={currentUser}
+          onResetToGeneral={handleSelectGeneral}
         />
 
       </main>
@@ -465,6 +540,33 @@ export default function App() {
       <HexagonalArchitectureModal
         isOpen={isArchitectureModalOpen}
         onClose={() => setIsArchitectureModalOpen(false)}
+      />
+
+      {/* 9. Help & User Guide Interactive Modal */}
+      <HelpGuideModal
+        isOpen={isHelpModalOpen}
+        onClose={() => setIsHelpModalOpen(false)}
+      />
+
+      {/* 10. Reports Table & Damage List Modal */}
+      <ReportsTableModal
+        isOpen={isReportsTableModalOpen}
+        onClose={() => setIsReportsTableModalOpen(false)}
+        damageReports={damageReports}
+        onOpenNewIncident={() => setIsNewIncidentOpen(true)}
+        onUpdateReportStatus={handleUpdateDamageReportStatus}
+        onViewItemDetail={(itemId) => {
+          const found = items.find((i) => i.id === itemId);
+          if (found) {
+            setActiveSelectedItem(found);
+            setIsDetailModalOpen(true);
+          }
+        }}
+        currentUser={currentUser}
+        onScrollToSection={() => {
+          const el = document.getElementById('damage-reports-list-section');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }}
       />
 
     </div>

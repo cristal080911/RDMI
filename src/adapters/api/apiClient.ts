@@ -5,16 +5,38 @@
 
 import {
   MaintenanceItem,
+  DamageReport,
   ProgressAdvance,
   User,
   InstitutionalStats,
   AreaType,
   ItemStatus,
   UrgencyLevel,
-  UserRole
+  UserRole,
+  SecurityEmailNotification,
+  EmailNotificationType
 } from '../../core/domain/entities';
 import { MaintenanceService } from '../../application/useCases';
 import { FirebaseDatabaseService, INITIAL_ADMIN_USERS, INITIAL_FIRESTORE_ITEMS, FirestoreUserRecord } from '../../services/firebaseService';
+import { EmailNotificationService } from '../../services/emailNotificationService';
+
+// Helper to access resilient local storage
+function getLocalStoredDamageReports(): DamageReport[] {
+  try {
+    const raw = localStorage.getItem('sigma_offline_damage_reports');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+  return [];
+}
+
+function setLocalStoredDamageReports(reports: DamageReport[]) {
+  try {
+    localStorage.setItem('sigma_offline_damage_reports', JSON.stringify(reports));
+  } catch (e) {}
+}
 
 // Helper to access resilient local storage
 function getLocalStoredItems(): MaintenanceItem[] {
@@ -63,6 +85,9 @@ export class ApiClient {
 
   // --- AUTHENTICATION ---
   static async login(usernameOrEmail: string, passwordAttempt: string): Promise<{ success: boolean; user: User; token: string }> {
+    if (usernameOrEmail.includes(' ') || /\s/.test(usernameOrEmail)) {
+      throw new Error('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
+    }
     const clean = String(usernameOrEmail).trim().toLowerCase();
     const cleanPassword = String(passwordAttempt);
 
@@ -136,6 +161,9 @@ export class ApiClient {
     department: string;
     isStudent?: boolean;
   }): Promise<{ success: boolean; message: string; user: User }> {
+    if (payload.username.includes(' ') || /\s/.test(payload.username)) {
+      throw new Error('El nombre de usuario no puede contener espacios. No se pueden usar usuarios con espacios.');
+    }
     const cleanUsername = String(payload.username).trim().toLowerCase();
     const cleanEmail = String(payload.email).trim().toLowerCase();
 
@@ -263,9 +291,21 @@ export class ApiClient {
       user.password = cleanPass;
       setLocalStoredUsers(localUsers);
       const { password: _, ...safeUser } = user;
+
+      // Dispatch security email notification
+      try {
+        await EmailNotificationService.sendSecurityEmailNotification({
+          type: 'PASSWORD_RESET',
+          toEmail: safeUser.email,
+          recipientName: safeUser.name,
+          recipientUsername: safeUser.username,
+          roleTitle: safeUser.roleTitle
+        });
+      } catch (e) {}
+
       return {
         success: true,
-        message: `Contraseña recuperada exitosamente para ${safeUser.name}.`,
+        message: `Contraseña recuperada exitosamente para ${safeUser.name}. Se ha enviado una notificación de seguridad a ${safeUser.email}.`,
         user: safeUser
       };
     }
@@ -298,11 +338,39 @@ export class ApiClient {
       }
       user.password = cleanPass;
       setLocalStoredUsers(localUsers);
+
+      // Dispatch security email notification
+      try {
+        await EmailNotificationService.sendSecurityEmailNotification({
+          type: 'PASSWORD_CHANGED',
+          toEmail: user.email,
+          recipientName: user.name,
+          recipientUsername: user.username,
+          roleTitle: user.roleTitle
+        });
+      } catch (e) {}
+
       return {
         success: true,
-        message: 'Contraseña actualizada correctamente.'
+        message: `Contraseña actualizada correctamente. Se ha notificado formalmente a su correo (${user.email}).`
       };
     }
+  }
+
+  // --- SECURITY & EMAIL NOTIFICATIONS ---
+  static async sendSecurityEmailNotification(params: {
+    type: EmailNotificationType;
+    toEmail: string;
+    recipientName: string;
+    recipientUsername: string;
+    roleTitle?: string;
+    securityCode?: string;
+  }): Promise<SecurityEmailNotification> {
+    return await EmailNotificationService.sendSecurityEmailNotification(params);
+  }
+
+  static async getRecentEmailNotifications(): Promise<SecurityEmailNotification[]> {
+    return await EmailNotificationService.getRecentNotifications();
   }
 
   // --- MAINTENANCE ITEMS ---
@@ -507,5 +575,146 @@ export class ApiClient {
       const pendingUsers = getLocalStoredUsers().filter(u => u.status === 'PENDING_APPROVAL').length;
       return MaintenanceService.calculateStats(items, pendingUsers);
     }
+  }
+
+  // --- SEPARATE DAMAGE REPORTS API ---
+  static async getDamageReports(filters?: {
+    area?: AreaType | 'ALL';
+    urgency?: UrgencyLevel | 'ALL';
+    status?: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO' | 'ALL';
+    search?: string;
+  }): Promise<DamageReport[]> {
+    try {
+      const reports = await FirebaseDatabaseService.getDamageReports(filters);
+      setLocalStoredDamageReports(reports);
+      return reports;
+    } catch (e) {
+      let local = getLocalStoredDamageReports();
+      if (local.length === 0) {
+        const items = getLocalStoredItems();
+        local = items
+          .filter(i => i.status === 'DANADO' || i.status === 'EN_MANTENIMIENTO')
+          .map((item, idx) => ({
+            id: `rep_dan_${item.id}`,
+            reportCode: `REP-DAN-${101 + idx}`,
+            itemId: item.id,
+            itemCode: item.code,
+            area: item.area,
+            title: item.title,
+            damageDescription: item.description,
+            location: item.location,
+            urgency: item.urgency,
+            status: item.status === 'DANADO' ? 'PENDIENTE' : 'EN_REPARACION',
+            reportedBy: item.reportedBy,
+            assignedTo: item.assignedTo,
+            photos: item.photos || [],
+            createdAt: item.createdAt,
+            solutionNotes: item.notes
+          }));
+        setLocalStoredDamageReports(local);
+      }
+
+      if (filters?.area && filters.area !== 'ALL') {
+        local = local.filter(r => r.area === filters.area);
+      }
+      if (filters?.urgency && filters.urgency !== 'ALL') {
+        local = local.filter(r => r.urgency === filters.urgency);
+      }
+      if (filters?.status && filters.status !== 'ALL') {
+        local = local.filter(r => r.status === filters.status);
+      }
+      if (filters?.search && filters.search.trim()) {
+        const q = filters.search.toLowerCase().trim();
+        local = local.filter(r =>
+          r.title.toLowerCase().includes(q) ||
+          r.reportCode.toLowerCase().includes(q) ||
+          r.damageDescription.toLowerCase().includes(q) ||
+          r.location.toLowerCase().includes(q)
+        );
+      }
+      return local;
+    }
+  }
+
+  static async createDamageReport(report: {
+    area: AreaType;
+    title: string;
+    damageDescription: string;
+    location: string;
+    urgency: UrgencyLevel;
+    reportedBy: { id: string; name: string; role: UserRole; roleTitle: string; email?: string };
+    assignedTo: { name: string; cargo: string; phone?: string; email?: string };
+    photos?: string[];
+    itemId?: string;
+    itemCode?: string;
+  }): Promise<DamageReport> {
+    try {
+      const created = await FirebaseDatabaseService.createDamageReport(report);
+      const local = getLocalStoredDamageReports();
+      setLocalStoredDamageReports([created, ...local]);
+      return created;
+    } catch (e) {
+      const local = getLocalStoredDamageReports();
+      const count = local.length + 101;
+      const created: DamageReport = {
+        id: `rep_dan_${Date.now()}`,
+        reportCode: `REP-DAN-${count}`,
+        itemId: report.itemId,
+        itemCode: report.itemCode,
+        area: report.area,
+        title: report.title.trim(),
+        damageDescription: report.damageDescription.trim(),
+        location: report.location.trim(),
+        urgency: report.urgency,
+        status: 'PENDIENTE',
+        reportedBy: report.reportedBy,
+        assignedTo: report.assignedTo,
+        photos: report.photos || [],
+        createdAt: new Date().toISOString()
+      };
+      setLocalStoredDamageReports([created, ...local]);
+      return created;
+    }
+  }
+
+  static async updateDamageReportStatus(
+    id: string,
+    newStatus: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO',
+    solutionNotes?: string,
+    resolvedBy?: string
+  ): Promise<DamageReport> {
+    try {
+      const updated = await FirebaseDatabaseService.updateDamageReportStatus(id, newStatus, solutionNotes, resolvedBy);
+      const local = getLocalStoredDamageReports();
+      const idx = local.findIndex(r => r.id === id);
+      if (idx !== -1) {
+        local[idx] = updated;
+        setLocalStoredDamageReports(local);
+      }
+      return updated;
+    } catch (e) {
+      const local = getLocalStoredDamageReports();
+      const idx = local.findIndex(r => r.id === id);
+      if (idx === -1) throw new Error('Reporte de daño no encontrado.');
+      local[idx] = {
+        ...local[idx],
+        status: newStatus,
+        solutionNotes: solutionNotes !== undefined ? solutionNotes : local[idx].solutionNotes,
+        resolvedAt: newStatus === 'RESUELTO' ? new Date().toISOString() : local[idx].resolvedAt,
+        resolvedBy: newStatus === 'RESUELTO' && resolvedBy ? resolvedBy : local[idx].resolvedBy
+      };
+      setLocalStoredDamageReports(local);
+      return local[idx];
+    }
+  }
+
+  static async deleteDamageReport(id: string): Promise<boolean> {
+    try {
+      await FirebaseDatabaseService.deleteDamageReport(id);
+    } catch (e) {}
+    const local = getLocalStoredDamageReports();
+    const filtered = local.filter(r => r.id !== id);
+    setLocalStoredDamageReports(filtered);
+    return true;
   }
 }

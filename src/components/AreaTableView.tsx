@@ -15,7 +15,9 @@ import {
   Filter,
   Layers,
   ArrowUpDown,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Shield,
+  RotateCcw
 } from 'lucide-react';
 import { MaintenanceItem, AreaType, ItemStatus, UrgencyLevel, User } from '../core/domain/entities';
 import { MaintenanceService } from '../application/useCases';
@@ -33,6 +35,7 @@ interface AreaTableViewProps {
   onAddAdvance: (item: MaintenanceItem) => void;
   onOpenNewIncident: () => void;
   currentUser: User | null;
+  onResetToGeneral?: () => void;
 }
 
 export const AreaTableView: React.FC<AreaTableViewProps> = ({
@@ -47,8 +50,11 @@ export const AreaTableView: React.FC<AreaTableViewProps> = ({
   onViewItemDetail,
   onAddAdvance,
   onOpenNewIncident,
-  currentUser
+  currentUser,
+  onResetToGeneral
 }) => {
+  const isFiltered = currentArea !== 'ALL' || selectedStatus !== 'ALL' || selectedUrgency !== 'ALL' || searchQuery.trim() !== '';
+
   const filteredItems = MaintenanceService.filterItems(items, {
     area: currentArea,
     status: selectedStatus,
@@ -84,7 +90,7 @@ export const AreaTableView: React.FC<AreaTableViewProps> = ({
         };
       default:
         return {
-          title: 'Consolidado Institucional de Mantenimiento',
+          title: 'Gestión General y Consolidado Institucional',
           subtitle: 'Visión unificada de las tres áreas críticas: Eléctricos, Estructurales y Recursos',
           icon: Layers,
           badgeColor: 'bg-purple-100 text-purple-900 border-purple-300',
@@ -97,7 +103,7 @@ export const AreaTableView: React.FC<AreaTableViewProps> = ({
   const HeaderIcon = areaInfo.icon;
 
   return (
-    <div className="bg-[#FDFBF7] rounded-2xl border border-[#E5DEC9] shadow-xl shadow-indigo-950/30 overflow-hidden mb-8">
+    <div id="institutional-maintenance-table-view" className="bg-[#FDFBF7] rounded-2xl border border-[#E5DEC9] shadow-xl shadow-indigo-950/30 overflow-hidden mb-8">
       
       {/* Header Section (Beige Container with Purple / Emerald Title) */}
       <div className="p-4 sm:p-6 border-b border-[#ECE5D8] bg-[#F7F3EA]/70">
@@ -114,6 +120,11 @@ export const AreaTableView: React.FC<AreaTableViewProps> = ({
                 <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${areaInfo.badgeColor}`}>
                   {filteredItems.length} registros
                 </span>
+                {isFiltered && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                    Filtro activo
+                  </span>
+                )}
               </div>
               <p className="text-xs sm:text-sm text-slate-600 font-medium mt-0.5">
                 {areaInfo.subtitle}
@@ -122,7 +133,19 @@ export const AreaTableView: React.FC<AreaTableViewProps> = ({
           </div>
 
           {/* Quick Action in Table Header */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            {isFiltered && onResetToGeneral && (
+              <button
+                type="button"
+                onClick={onResetToGeneral}
+                title="Volver a ver todo en Gestión General"
+                className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-purple-950/80 hover:bg-purple-900 text-purple-200 hover:text-white border border-purple-400/40 text-xs sm:text-sm font-bold shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Shield className="w-4 h-4 text-purple-300" />
+                <span>Ir a Gestión General</span>
+              </button>
+            )}
+
             <button
               onClick={onOpenNewIncident}
               className="w-full sm:w-auto px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs sm:text-sm font-bold shadow-md shadow-emerald-950/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
@@ -155,7 +178,7 @@ export const AreaTableView: React.FC<AreaTableViewProps> = ({
               onChange={(e) => onStatusChange(e.target.value as ItemStatus | 'ALL')}
               className="w-full px-3 py-2 rounded-xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-purple-600/40 focus:border-purple-600 transition-all shadow-inner cursor-pointer"
             >
-              <option value="ALL">🔍 Todos los Estados</option>
+              <option value="ALL">🔍 Todos los Estados (Gestión General)</option>
               <option value="DANADO">🔴 Dañado / Requiere Atención</option>
               <option value="EN_MANTENIMIENTO">🟡 En Mantenimiento / Arreglo</option>
               <option value="NUEVO_OPERATIVO">🟢 Nuevo / Operativo</option>
@@ -176,6 +199,44 @@ export const AreaTableView: React.FC<AreaTableViewProps> = ({
             </select>
           </div>
         </div>
+
+        {/* Active Filter Strip with Return to General Button */}
+        {isFiltered && onResetToGeneral && (
+          <div className="mt-3 pt-2.5 border-t border-[#E8E1D2] flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 text-slate-700">
+              <span className="font-semibold text-slate-600">Filtros aplicados:</span>
+              {currentArea !== 'ALL' && (
+                <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 font-medium border border-purple-200">
+                  Área: {currentArea}
+                </span>
+              )}
+              {selectedStatus !== 'ALL' && (
+                <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-medium border border-amber-200">
+                  Estado: {selectedStatus}
+                </span>
+              )}
+              {selectedUrgency !== 'ALL' && (
+                <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-900 font-medium border border-rose-200">
+                  Urgencia: {selectedUrgency}
+                </span>
+              )}
+              {searchQuery.trim() && (
+                <span className="px-2 py-0.5 rounded-md bg-slate-200 text-slate-800 font-medium border border-slate-300">
+                  Texto: "{searchQuery}"
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={onResetToGeneral}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-900 hover:bg-purple-800 text-white font-bold text-xs transition-colors cursor-pointer shadow-sm"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Restablecer a Gestión General</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Table Content (Desktop Table + Mobile Cards) */}

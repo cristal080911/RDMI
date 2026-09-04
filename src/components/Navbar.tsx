@@ -10,7 +10,10 @@ import {
   Layers,
   Sparkles,
   Printer,
-  KeyRound
+  KeyRound,
+  AlertTriangle,
+  HelpCircle,
+  ClipboardList
 } from 'lucide-react';
 import { User, AreaType } from '../core/domain/entities';
 
@@ -19,13 +22,16 @@ interface NavbarProps {
   activeArea: AreaType | 'ALL';
   onSelectArea: (area: AreaType | 'ALL') => void;
   onOpenNewIncident: () => void;
+  onOpenReportsTable?: () => void;
   onOpenApprovalPanel: () => void;
   onOpenPrintAuthorizedModal?: () => void;
   onOpenPasswordModal?: () => void;
   onOpenArchitectureModal: () => void;
+  onOpenHelpModal?: () => void;
   onLogout: () => void;
   onOpenLogin: () => void;
   pendingApprovalsCount: number;
+  damageReportsCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -33,13 +39,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeArea,
   onSelectArea,
   onOpenNewIncident,
+  onOpenReportsTable,
   onOpenApprovalPanel,
   onOpenPrintAuthorizedModal,
   onOpenPasswordModal,
   onOpenArchitectureModal,
+  onOpenHelpModal,
   onLogout,
   onOpenLogin,
-  pendingApprovalsCount
+  pendingApprovalsCount,
+  damageReportsCount
 }) => {
   return (
     <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-slate-950/85 border-b border-indigo-900/60 shadow-xl">
@@ -74,6 +83,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Quick Actions & User Profile */}
           <div className="flex items-center gap-2 sm:gap-3">
             
+            {/* Interactive Help & User Guide Button */}
+            {onOpenHelpModal && (
+              <button
+                onClick={onOpenHelpModal}
+                title="Abrir Manual y Guía de Uso de la Aplicación"
+                className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg bg-gradient-to-r from-emerald-900/90 to-teal-900/90 hover:from-emerald-800 hover:to-teal-800 text-emerald-100 hover:text-white text-xs font-bold border border-emerald-500/50 flex items-center gap-1.5 transition-all shadow-md shadow-emerald-950/40 cursor-pointer"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-emerald-300" />
+                <span className="hidden sm:inline">Guía de Ayuda</span>
+              </button>
+            )}
+
             {/* Print / View Authorized Staff Directory */}
             {onOpenPrintAuthorizedModal && (
               <button
@@ -114,13 +135,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </button>
                 )}
 
-                {/* New Incident / Report Button */}
+                {/* Tabla de Reportes Button */}
                 <button
-                  onClick={onOpenNewIncident}
-                  className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold shadow-md shadow-emerald-950/50 flex items-center gap-1.5 transition-all transform hover:-translate-y-0.5 cursor-pointer"
+                  onClick={onOpenReportsTable || onOpenNewIncident}
+                  title="Abrir Tabla y Listado Completo de Reportes de Daños"
+                  className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-bold shadow-md shadow-emerald-950/50 flex items-center gap-1.5 transition-all transform hover:-translate-y-0.5 cursor-pointer"
                 >
-                  <PlusCircle className="w-4 h-4 text-emerald-100" />
-                  <span>Reportar Daño / Nuevo</span>
+                  <ClipboardList className="w-4 h-4 text-emerald-100" />
+                  <span>Tabla de Reportes</span>
+                  {typeof damageReportsCount === 'number' && (
+                    <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-black bg-emerald-950/80 text-emerald-200 border border-emerald-400/40">
+                      {damageReportsCount}
+                    </span>
+                  )}
                 </button>
 
                 {/* User Profile Pill */}
@@ -192,7 +219,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             <Shield className="w-3.5 h-3.5" />
-            <span>Consolidado General</span>
+            <span>Gestión General (Consolidado)</span>
           </button>
 
           <button
@@ -229,6 +256,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Package className="w-3.5 h-3.5 text-emerald-400" />
             <span>3. Recursos & Equipos</span>
+          </button>
+
+          <button
+            onClick={() => {
+              const el = document.getElementById('damage-reports-list-section');
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title="Ir directamente a la lista y bitácora de reportes de daños"
+            className="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-500/50 flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer shadow-sm ml-auto"
+          >
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+            <span>⚠️ Bitácora de Daños</span>
           </button>
         </div>
       </div>

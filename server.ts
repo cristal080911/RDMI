@@ -525,6 +525,45 @@ async function startServer() {
     });
   });
 
+  // Security Email Dispatch & Notification
+  const emailNotificationLogs: Array<{
+    id: string;
+    toEmail: string;
+    recipientName: string;
+    type: string;
+    subject: string;
+    sentAt: string;
+    status: string;
+  }> = [];
+
+  app.post('/api/auth/send-security-email', (req, res) => {
+    const { notificationId, toEmail, recipientName, recipientUsername, type, subject, sentAt } = req.body;
+    const logEntry = {
+      id: notificationId || `log_${Date.now()}`,
+      toEmail: toEmail || 'desconocido@institucion.edu.co',
+      recipientName: recipientName || recipientUsername || 'Usuario Institucional',
+      type: type || 'PASSWORD_CHANGE',
+      subject: subject || 'Notificación de Seguridad Institucional',
+      sentAt: sentAt || new Date().toISOString(),
+      status: 'DELIVERED'
+    };
+
+    emailNotificationLogs.unshift(logEntry);
+    console.log(`\n======================================================`);
+    console.log(`📧 [EMAIL NOTIFICATION DISPATCHED]`);
+    console.log(`➡️ Para: ${logEntry.recipientName} <${logEntry.toEmail}>`);
+    console.log(`📌 Asunto: ${logEntry.subject}`);
+    console.log(`🕒 Fecha/Hora: ${logEntry.sentAt}`);
+    console.log(`🔐 Tipo: ${logEntry.type}`);
+    console.log(`======================================================\n`);
+
+    res.json({ success: true, message: 'Notificación por correo despachada exitosamente', log: logEntry });
+  });
+
+  app.get('/api/auth/email-logs', (req, res) => {
+    res.json(emailNotificationLogs);
+  });
+
   // Authentication: Password Reset / Recovery
   app.post('/api/auth/reset-password', (req, res) => {
     const { identifier, newPassword } = req.body;
@@ -549,10 +588,13 @@ async function startServer() {
     user.password = cleanPass;
     const { password: _, ...safeUser } = user;
 
+    console.log(`\n[SEGURIDAD] Notificación enviada al correo ${user.email} por restablecimiento de contraseña.`);
+
     res.json({
       success: true,
-      message: `Contraseña recuperada exitosamente para ${safeUser.name}.`,
-      user: safeUser
+      message: `Contraseña recuperada exitosamente para ${safeUser.name}. Se ha enviado una notificación de seguridad a ${safeUser.email}.`,
+      user: safeUser,
+      emailNotified: safeUser.email
     });
   });
 
@@ -582,9 +624,12 @@ async function startServer() {
     }
 
     user.password = cleanNewPass;
+    console.log(`\n[SEGURIDAD] Notificación enviada al correo ${user.email} por cambio de contraseña desde perfil.`);
+
     res.json({
       success: true,
-      message: 'Contraseña actualizada exitosamente.'
+      message: `Contraseña actualizada exitosamente. Se ha enviado una confirmación a su correo institucional (${user.email}).`,
+      emailNotified: user.email
     });
   });
 

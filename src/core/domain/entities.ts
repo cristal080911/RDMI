@@ -70,6 +70,32 @@ export interface MaintenanceItem {
   notes?: string;
 }
 
+export interface DamageReport {
+  id: string;
+  reportCode: string; // e.g. REP-DAN-101
+  itemId?: string;
+  itemCode?: string;
+  area: AreaType;
+  title: string;
+  damageDescription: string;
+  location: string;
+  urgency: UrgencyLevel;
+  status: 'PENDIENTE' | 'EN_REPARACION' | 'RESUELTO';
+  reportedBy: {
+    id: string;
+    name: string;
+    role: UserRole;
+    roleTitle: string;
+    email?: string;
+  };
+  assignedTo: AssignedPerson;
+  photos: string[];
+  createdAt: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  solutionNotes?: string;
+}
+
 export interface InstitutionalStats {
   totalItems: number;
   byArea: {
@@ -89,4 +115,22 @@ export interface InstitutionalStats {
   };
   recentAdvancesCount: number;
   pendingApprovalsCount: number;
+}
+
+export type EmailNotificationType = 'PASSWORD_RESET' | 'PASSWORD_CHANGED' | 'RECOVERY_CODE';
+
+export interface SecurityEmailNotification {
+  id: string;
+  type: EmailNotificationType;
+  toEmail: string;
+  recipientName: string;
+  recipientUsername: string;
+  subject: string;
+  previewSnippet: string;
+  htmlContent: string;
+  sentAt: string;
+  status: 'DELIVERED' | 'SENT';
+  ipInfo?: string;
+  deviceInfo?: string;
+  securityCode?: string;
 }
