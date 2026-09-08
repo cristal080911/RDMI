@@ -62,6 +62,74 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  const [adminCodePrompt, setAdminCodePrompt] = useState<{
+    isOpen: boolean;
+    username: string;
+    pass: string;
+    displayName: string;
+    roleTitle: string;
+    enteredCode: string;
+    error: string | null;
+  } | null>(null);
+
+  const isAdminIdentifier = (id: string): boolean => {
+    const clean = id.trim().toLowerCase();
+    const known = [
+      'rectoria',
+      'rectoria@institucion.edu.co',
+      'coord.mantenimiento',
+      'mantenimiento@institucion.edu.co',
+      'cristalpulecio@gmail.com',
+      'cristalpulecio',
+      'waespinosa2017@gmail.com',
+      'waespinosa',
+      'karollsofiaac19@gmail.com',
+      'karollsofia'
+    ];
+    return known.includes(clean);
+  };
+
+  const openAdminCodePrompt = (username: string, pass: string, displayName: string, roleTitle: string) => {
+    setError(null);
+    setAdminCodePrompt({
+      isOpen: true,
+      username,
+      pass,
+      displayName,
+      roleTitle,
+      enteredCode: '',
+      error: null
+    });
+  };
+
+  const handleAdminCodeSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!adminCodePrompt) return;
+    const code = adminCodePrompt.enteredCode.trim();
+    if (!code) {
+      setAdminCodePrompt(prev => prev ? {
+        ...prev,
+        error: 'Por favor ingrese el código de acceso del administrador.'
+      } : null);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      setLoginAdminCode(code);
+      await onLogin(adminCodePrompt.username, adminCodePrompt.pass, code);
+      setAdminCodePrompt(null);
+      onClose();
+    } catch (err: any) {
+      setAdminCodePrompt(prev => prev ? {
+        ...prev,
+        error: err.message || 'Código de acceso incorrecto. Ingrese el código determinado por el administrador.'
+      } : null);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   // Demo shortcut login
@@ -90,12 +158,36 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    // If admin identifier and no code entered, prompt
+    if (isAdminIdentifier(loginUsername) && !loginAdminCode.trim()) {
+      openAdminCodePrompt(loginUsername.trim(), loginPassword, loginUsername.trim(), 'Cuenta Administrativa');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await onLogin(loginUsername.trim(), loginPassword, loginAdminCode.trim());
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Error al iniciar sesión');
+      const errMsg = err.message || 'Error al iniciar sesión';
+      if (
+        errMsg.toLowerCase().includes('código') ||
+        errMsg.toLowerCase().includes('codigo') ||
+        errMsg.toLowerCase().includes('bloqueo') ||
+        isAdminIdentifier(loginUsername.trim())
+      ) {
+        setAdminCodePrompt({
+          isOpen: true,
+          username: loginUsername.trim(),
+          pass: loginPassword,
+          displayName: loginUsername.trim(),
+          roleTitle: 'Cuenta con Privilegios Administrativos',
+          enteredCode: loginAdminCode.trim(),
+          error: errMsg.includes('REQUERIDO') ? null : errMsg
+        });
+      } else {
+        setError(errMsg);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -292,29 +384,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 )}
               </div>
 
-              {/* Administrative Security Code */}
-              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-300 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-amber-950 flex items-center gap-1">
-                    <Lock className="w-3 h-3 text-amber-700" />
-                    <span>Código Administrativo</span>
-                  </label>
-                  <span className="text-[9px] font-bold text-amber-900 bg-amber-200/80 px-1.5 py-0.2 rounded border border-amber-300">
-                    Solo Administrativos
-                  </span>
-                </div>
-                <input
-                  type="text"
-                  value={loginAdminCode}
-                  onChange={(e) => setLoginAdminCode(e.target.value.toUpperCase())}
-                  placeholder="Ej: ADM-2026 (Req. para personal administrativo)"
-                  className="w-full px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-600 focus:outline-none uppercase"
-                />
-                <p className="text-[10px] text-amber-900 leading-tight">
-                  🔒 Cuentas con rol Administrativo están bloqueadas y requieren su código institucional (ej: <strong className="font-mono">ADM-2026</strong>).
-                </p>
-              </div>
-
               <button
                 type="submit"
                 disabled={isSubmitting}
@@ -332,25 +401,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <div className="grid grid-cols-3 gap-1.5">
                   <button
                     type="button"
-                    onClick={() => handleQuickLogin('rectoria', 'password123', '')}
-                    className="p-2 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-950 text-center text-[10px] font-bold border border-purple-300 transition-colors cursor-pointer"
+                    onClick={() => openAdminCodePrompt('rectoria', 'admin123', 'Dra. Carmen Valencia', 'Rectora General (Superior)')}
+                    className="p-2 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-950 text-center text-[10px] font-bold border border-purple-300 transition-colors cursor-pointer flex flex-col items-center justify-center gap-0.5"
+                    title="Pedir código de acceso del administrador"
                   >
-                    👑 Rectora (Superior)
+                    <span>👑 Rectora</span>
+                    <span className="text-[9px] text-purple-700 font-normal">Pide Código</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleQuickLogin('coord.mantenimiento', 'password123', 'ADM-2026')}
-                    className="p-2 rounded-xl bg-blue-100 hover:bg-blue-200 text-blue-950 text-center text-[10px] font-bold border border-blue-300 transition-colors cursor-pointer"
-                    title="Ingresar con código ADM-2026"
+                    onClick={() => openAdminCodePrompt('coord.mantenimiento', 'admin123', 'Ing. Carlos Ruiz', 'Coordinador de Infraestructura')}
+                    className="p-2 rounded-xl bg-blue-100 hover:bg-blue-200 text-blue-950 text-center text-[10px] font-bold border border-blue-300 transition-colors cursor-pointer flex flex-col items-center justify-center gap-0.5"
+                    title="Pedir código de acceso del administrador"
                   >
-                    🛠️ Admin (Con Código)
+                    <span>🛠️ Admin</span>
+                    <span className="text-[9px] text-blue-700 font-normal">Pide Código</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleQuickLogin('prof.martinez', 'password123', '')}
-                    className="p-2 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-950 text-center text-[10px] font-bold border border-emerald-300 transition-colors cursor-pointer"
+                    onClick={() => handleQuickLogin('prof.martinez', 'admin123', '')}
+                    className="p-2 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-950 text-center text-[10px] font-bold border border-emerald-300 transition-colors cursor-pointer flex flex-col items-center justify-center gap-0.5"
                   >
-                    📚 Docente Ciencias
+                    <span>📚 Docente</span>
+                    <span className="text-[9px] text-emerald-700 font-normal">Acceso Libre</span>
                   </button>
                 </div>
               </div>
@@ -500,6 +573,102 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
       </div>
+
+      {/* Modal para solicitar el Código de Acceso del Administrador al presionar Entrar */}
+      {adminCodePrompt && adminCodePrompt.isOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#FDFBF7] rounded-3xl border-2 border-amber-400/80 shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="p-4 bg-gradient-to-r from-amber-950 via-purple-950 to-slate-950 text-white flex items-center justify-between border-b border-amber-500/30">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-300 bg-amber-900/60 px-1.5 py-0.2 rounded border border-amber-500/40">
+                    Seguridad Institucional
+                  </span>
+                  <h4 className="text-sm font-black text-white mt-0.5">
+                    Código de Acceso del Administrador
+                  </h4>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdminCodePrompt(null)}
+                className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer transition-colors"
+                title="Cerrar"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleAdminCodeSubmit} className="p-5 space-y-3.5">
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-amber-950">
+                    {adminCodePrompt.displayName}
+                  </span>
+                  <span className="text-[9px] font-bold text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded border border-amber-300">
+                    Administrador
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-900">
+                  {adminCodePrompt.roleTitle} • <span className="font-mono">{adminCodePrompt.username}</span>
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                  Código de Acceso Determinado por el Administrador *
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    autoFocus
+                    required
+                    value={adminCodePrompt.enteredCode}
+                    onChange={(e) => setAdminCodePrompt(prev => prev ? { ...prev, enteredCode: e.target.value, error: null } : null)}
+                    placeholder="Ingrese el código de acceso"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-amber-400 text-xs sm:text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-600 focus:outline-none shadow-sm"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-600 leading-relaxed">
+                  🛡️ Debe suministrar el código de acceso institucional determinado por el administrador.
+                </p>
+              </div>
+
+              {adminCodePrompt.error && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-xs text-rose-900 font-bold flex items-center gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-700 shrink-0" />
+                  <span>{adminCodePrompt.error}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setAdminCodePrompt(null)}
+                  className="flex-1 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white text-xs font-black shadow-md shadow-amber-950/30 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>{isSubmitting ? 'Verificando...' : 'Verificar y Entrar'}</span>
+                </button>
+              </div>
+            </form>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 };

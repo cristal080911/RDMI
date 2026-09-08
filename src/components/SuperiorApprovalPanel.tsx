@@ -9,9 +9,13 @@ import {
   Users,
   AlertCircle,
   ShieldAlert,
-  Printer
+  Printer,
+  KeyRound,
+  Edit3,
+  Save
 } from 'lucide-react';
 import { User, UserRole } from '../core/domain/entities';
+import { ApiClient } from '../adapters/api/apiClient';
 
 interface SuperiorApprovalPanelProps {
   isOpen: boolean;
@@ -36,6 +40,9 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [editingCodeUserId, setEditingCodeUserId] = useState<string | null>(null);
+  const [newAdminCodeVal, setNewAdminCodeVal] = useState<string>('');
+  const [savingCode, setSavingCode] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -75,6 +82,28 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
       });
     } finally {
       setProcessingId(null);
+    }
+  };
+
+  const handleSaveAdminCode = async (userId: string) => {
+    const clean = newAdminCodeVal.trim();
+    if (!clean) return;
+    setSavingCode(true);
+    try {
+      await ApiClient.updateAdminCode(userId, clean);
+      setFeedback({
+        text: `Código de acceso actualizado exitosamente a: ${clean}`,
+        type: 'success'
+      });
+      setEditingCodeUserId(null);
+      await loadData();
+    } catch (err: any) {
+      setFeedback({
+        text: err.message || 'Error al actualizar código institucional',
+        type: 'error'
+      });
+    } finally {
+      setSavingCode(false);
     }
   };
 
@@ -259,12 +288,60 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
                       <p className="text-slate-500 text-[11px] mt-0.5">
                         {user.email} • <span className="font-mono text-purple-950 font-semibold">{user.username}</span> • {user.department}
                       </p>
-                      {user.role === 'ADMINISTRATIVO' && user.adminCode && (
-                        <div className="mt-1 flex items-center gap-1 text-[11px]">
-                          <span className="text-amber-900 font-bold">Código de Desbloqueo:</span>
-                          <span className="font-mono font-black text-amber-950 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
-                            {user.adminCode}
+                      {/* Administrative Access Code (Determined by Admin / Superiors) */}
+                      {(user.role === 'ADMINISTRATIVO' || user.role === 'SUPERIOR') && (
+                        <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="text-amber-950 font-bold flex items-center gap-1">
+                            <KeyRound className="w-3 h-3 text-amber-700" />
+                            <span>Código de Acceso:</span>
                           </span>
+
+                          {editingCodeUserId === user.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                autoFocus
+                                value={newAdminCodeVal}
+                                onChange={(e) => setNewAdminCodeVal(e.target.value)}
+                                placeholder="Ej: 2026-admin"
+                                className="px-2 py-0.5 rounded border border-amber-400 bg-white font-mono font-bold text-xs text-amber-950 focus:outline-none focus:ring-1 focus:ring-amber-600"
+                              />
+                              <button
+                                type="button"
+                                disabled={savingCode}
+                                onClick={() => handleSaveAdminCode(user.id)}
+                                className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-800 text-white font-bold text-[10px] flex items-center gap-1 cursor-pointer transition-colors"
+                              >
+                                <Save className="w-2.5 h-2.5" />
+                                <span>{savingCode ? 'Guardando...' : 'Guardar'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingCodeUserId(null)}
+                                className="px-1.5 py-0.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium text-[10px] cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono font-black text-amber-950 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                                {user.adminCode || '2026-admin'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCodeUserId(user.id);
+                                  setNewAdminCodeVal(user.adminCode || '2026-admin');
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px] flex items-center gap-0.5 cursor-pointer transition-colors"
+                                title="Determinar o cambiar el código de acceso para esta cuenta"
+                              >
+                                <Edit3 className="w-2.5 h-2.5" />
+                                <span>Determinar Código</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

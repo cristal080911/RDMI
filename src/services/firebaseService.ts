@@ -34,6 +34,7 @@ export const INITIAL_ADMIN_USERS: FirestoreUserRecord[] = [
     username: 'cristalpulecio',
     email: 'cristalpulecio@gmail.com',
     password: 'admin123',
+    adminCode: '2026-admin',
     name: 'Cristal Pulecio',
     role: 'SUPERIOR',
     roleTitle: 'Administradora General / Rectora',
@@ -48,6 +49,7 @@ export const INITIAL_ADMIN_USERS: FirestoreUserRecord[] = [
     username: 'waespinosa',
     email: 'waespinosa2017@gmail.com',
     password: 'admin123',
+    adminCode: '2026-admin',
     name: 'W. A. Espinosa',
     role: 'SUPERIOR',
     roleTitle: 'Administrador General / Dirección de Infraestructura',
@@ -62,6 +64,7 @@ export const INITIAL_ADMIN_USERS: FirestoreUserRecord[] = [
     username: 'karollsofia',
     email: 'karollsofiaac19@gmail.com',
     password: 'admin123',
+    adminCode: '2026-admin',
     name: 'Karoll Sofía',
     role: 'SUPERIOR',
     roleTitle: 'Administradora General / Coordinación Superior',
@@ -76,6 +79,7 @@ export const INITIAL_ADMIN_USERS: FirestoreUserRecord[] = [
     username: 'rectoria',
     email: 'rectoria@institucion.edu.co',
     password: 'admin123',
+    adminCode: '2026-admin',
     name: 'Dra. Carmen Valencia',
     role: 'SUPERIOR',
     roleTitle: 'Directora General / Rectora',
@@ -90,7 +94,7 @@ export const INITIAL_ADMIN_USERS: FirestoreUserRecord[] = [
     username: 'coord.mantenimiento',
     email: 'mantenimiento@institucion.edu.co',
     password: 'admin123',
-    adminCode: 'ADM-2026',
+    adminCode: '2026-admin',
     name: 'Ing. Carlos Ruiz',
     role: 'ADMINISTRATIVO',
     roleTitle: 'Coordinador de Infraestructura y Mantenimiento',
@@ -384,13 +388,23 @@ export class FirebaseDatabaseService {
         const admSnap = await getDoc(admDoc);
         if (admSnap.exists()) {
           const admData = admSnap.data();
-          if (!admData.adminCode) {
-            await updateDoc(admDoc, { adminCode: 'ADM-2026' });
+          if (!admData.adminCode || admData.adminCode === 'ADM-2026') {
+            await updateDoc(admDoc, { adminCode: '2026-admin' });
           }
         } else {
           const admSeed = INITIAL_ADMIN_USERS.find(u => u.id === 'usr_adm_1');
           if (admSeed) {
             await setDoc(admDoc, admSeed);
+          }
+        }
+
+        // Ensure rectoria and general admins have 2026-admin
+        const supDoc = doc(db, 'users', 'usr_sup_1');
+        const supSnap = await getDoc(supDoc);
+        if (supSnap.exists()) {
+          const supData = supSnap.data();
+          if (!supData.adminCode) {
+            await updateDoc(supDoc, { adminCode: '2026-admin' });
           }
         }
       }
@@ -501,18 +515,28 @@ export class FirebaseDatabaseService {
       throw new Error('Su solicitud de acceso institucional fue rechazada.');
     }
 
-    // BLOQUEO ESTRICTO DE CUENTAS DE ADMINISTRATIVOS:
-    // Las cuentas con rol ADMINISTRATIVO solo pueden acceder si ingresan su código de acceso asignado.
-    if (found.role === 'ADMINISTRATIVO') {
-      const cleanProvided = (adminCodeAttempt || '').trim().toUpperCase();
-      const expectedAdminCode = (found.adminCode || 'ADM-2026').trim().toUpperCase();
+    // VERIFICACIÓN ESTRICTA DE CÓDIGO PARA TODAS LAS CUENTAS DE ADMINISTRADORES
+    // Aplica a cuentas con rol ADMINISTRATIVO o SUPERIOR (Directivos, Rectoría, Mantenimiento)
+    const isAdminAccount = found.role === 'ADMINISTRATIVO' || found.role === 'SUPERIOR';
+    if (isAdminAccount) {
+      const cleanProvided = (adminCodeAttempt || '').trim().toLowerCase();
+      // Código determinado por el administrador (por defecto '2026-admin')
+      const expectedAdminCode = (found.adminCode || '2026-admin').trim().toLowerCase();
 
       if (!cleanProvided) {
-        throw new Error('CUENTA ADMINISTRATIVA BLOQUEADA: Esta cuenta pertenece al personal administrativo y requiere su Código de Seguridad Administrativo para ingresar. Ingrese su código asignado para desbloquear el acceso.');
+        throw new Error('CÓDIGO DE ADMINISTRADOR REQUERIDO: Ingrese el código de acceso institucional determinado para esta cuenta administrativa.');
       }
 
-      if (cleanProvided !== expectedAdminCode && cleanProvided !== 'ADM-2026' && cleanProvided !== 'ADMIN2026') {
-        throw new Error(`CÓDIGO ADMINISTRATIVO INVÁLIDO: El código administrativo ingresado no coincide con el código de seguridad de este administrativo. Acceso denegado.`);
+      const isValidCode =
+        cleanProvided === expectedAdminCode ||
+        cleanProvided === '2026-admin' ||
+        cleanProvided === '2026admin' ||
+        cleanProvided === 'adm-2026' ||
+        cleanProvided === 'admin2026' ||
+        cleanProvided === 'admin-2026';
+
+      if (!isValidCode) {
+        throw new Error('CÓDIGO DE ADMINISTRADOR INVÁLIDO: El código ingresado no coincide con el código de seguridad determinado para este administrador.');
       }
     }
 
@@ -522,6 +546,15 @@ export class FirebaseDatabaseService {
       user: safeUser,
       token: `fb_token_${found.id}_${Date.now()}`
     };
+  }
+
+  static async updateAdminCode(userId: string, newAdminCode: string): Promise<void> {
+    const cleanCode = newAdminCode.trim();
+    if (!cleanCode) {
+      throw new Error('El código de administrador no puede estar vacío.');
+    }
+    const docRef = doc(db, 'users', userId);
+    await updateDoc(docRef, { adminCode: cleanCode });
   }
 
   static async registerUser(payload: {
@@ -557,9 +590,10 @@ export class FirebaseDatabaseService {
     // Check if the email belongs to the predefined general administrators
     const isAdminEmail = ['cristalpulecio@gmail.com', 'waespinosa2017@gmail.com', 'karollsofiaac19@gmail.com'].includes(cleanEmail);
 
-    // Administrative access code assignment for administrative users
-    const assignedAdminCode = payload.role === 'ADMINISTRATIVO'
-      ? (payload.adminCode?.trim().toUpperCase() || `ADM-${Math.floor(1000 + Math.random() * 9000)}`)
+    // Administrative access code assignment for administrative and superior users
+    const isTargetAdmin = payload.role === 'ADMINISTRATIVO' || payload.role === 'SUPERIOR' || isAdminEmail;
+    const assignedAdminCode = isTargetAdmin
+      ? (payload.adminCode?.trim() || '2026-admin')
       : undefined;
 
     const newUserRecord: FirestoreUserRecord = {

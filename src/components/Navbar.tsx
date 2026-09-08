@@ -13,7 +13,8 @@ import {
   KeyRound,
   AlertTriangle,
   HelpCircle,
-  ClipboardList
+  ClipboardList,
+  Menu
 } from 'lucide-react';
 import { User, AreaType } from '../core/domain/entities';
 
@@ -32,6 +33,7 @@ interface NavbarProps {
   onOpenLogin: () => void;
   pendingApprovalsCount: number;
   damageReportsCount?: number;
+  onToggleMobileSidebar?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -48,7 +50,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
   onOpenLogin,
   pendingApprovalsCount,
-  damageReportsCount
+  damageReportsCount,
+  onToggleMobileSidebar
 }) => {
   return (
     <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-slate-950/85 border-b border-indigo-900/60 shadow-xl">
@@ -57,6 +60,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           
           {/* Logo & Institution Branding */}
           <div className="flex items-center gap-3">
+            {/* Sidebar Drawer Toggle Button */}
+            {onToggleMobileSidebar && (
+              <button
+                type="button"
+                onClick={onToggleMobileSidebar}
+                title="Abrir Menú y Barra Lateral de la Aplicación"
+                className="lg:hidden p-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-indigo-900/80 transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-purple-950/30"
+              >
+                <Menu className="w-5 h-5 text-emerald-400" />
+                <span className="text-xs font-bold text-slate-200 hidden sm:inline">Menú</span>
+              </button>
+            )}
+
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-tr from-purple-700 via-indigo-600 to-emerald-500 flex items-center justify-center shadow-lg shadow-purple-900/40 ring-2 ring-purple-400/30 shrink-0">
               <Shield className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
             </div>

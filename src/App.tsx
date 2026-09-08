@@ -49,6 +49,7 @@ import { PasswordManagementModal } from './components/PasswordManagementModal';
 import { HelpGuideModal } from './components/HelpGuideModal';
 import { LoginView } from './components/LoginView';
 import { ReportsTableModal } from './components/ReportsTableModal';
+import { AppSidebar } from './components/AppSidebar';
 
 export default function App() {
   // Authentication State: defaults to null if not stored in localStorage
@@ -94,6 +95,7 @@ export default function App() {
   const [passwordModalMode, setPasswordModalMode] = useState<'RECOVER' | 'CHANGE'>('RECOVER');
   const [isArchitectureModalOpen, setIsArchitectureModalOpen] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Selected Item for Detail / Advance Modal
   const [activeSelectedItem, setActiveSelectedItem] = useState<MaintenanceItem | null>(null);
@@ -339,16 +341,20 @@ export default function App() {
 
   // IF AUTHENTICATED: Display the Full Main Dashboard & Maintenance Areas
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-[#131131] to-[#2e0854] text-slate-100 flex flex-col selection:bg-purple-500 selection:text-white">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-[#131131] to-[#2e0854] text-slate-100 flex flex-row selection:bg-purple-500 selection:text-white">
       
-      {/* Sticky Top Navigation */}
-      <Navbar
+      {/* Barra Lateral Izquierda (Sidebar Vertical con todo lo que tiene la App) */}
+      <AppSidebar
         currentUser={currentUser}
         activeArea={activeArea}
+        selectedStatus={selectedStatus}
+        stats={stats}
+        damageReportsCount={damageReports.length}
+        isRefreshing={isRefreshing}
         onSelectArea={(area) => setActiveArea(area)}
+        onSelectStatus={(st) => setSelectedStatus(st)}
         onOpenNewIncident={() => setIsNewIncidentOpen(true)}
         onOpenReportsTable={() => setIsReportsTableModalOpen(true)}
-        damageReportsCount={damageReports.length}
         onOpenApprovalPanel={() => setIsApprovalPanelOpen(true)}
         onOpenPrintAuthorizedModal={() => setIsAuthorizedPersonnelModalOpen(true)}
         onOpenPasswordModal={() => {
@@ -357,13 +363,39 @@ export default function App() {
         }}
         onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
         onOpenHelpModal={() => setIsHelpModalOpen(true)}
+        onRefresh={() => fetchData()}
         onLogout={handleLogout}
-        onOpenLogin={() => setIsAuthModalOpen(true)}
-        pendingApprovalsCount={stats.pendingApprovalsCount}
+        onSelectGeneral={handleSelectGeneral}
+        isMobileOpen={isMobileSidebarOpen}
+        setIsMobileOpen={setIsMobileSidebarOpen}
       />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-6">
+      {/* Main Content Layout */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
+        {/* Sticky Top Navigation */}
+        <Navbar
+          currentUser={currentUser}
+          activeArea={activeArea}
+          onSelectArea={(area) => setActiveArea(area)}
+          onOpenNewIncident={() => setIsNewIncidentOpen(true)}
+          onOpenReportsTable={() => setIsReportsTableModalOpen(true)}
+          damageReportsCount={damageReports.length}
+          onOpenApprovalPanel={() => setIsApprovalPanelOpen(true)}
+          onOpenPrintAuthorizedModal={() => setIsAuthorizedPersonnelModalOpen(true)}
+          onOpenPasswordModal={() => {
+            setPasswordModalMode('CHANGE');
+            setIsPasswordModalOpen(true);
+          }}
+          onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
+          onOpenHelpModal={() => setIsHelpModalOpen(true)}
+          onLogout={handleLogout}
+          onOpenLogin={() => setIsAuthModalOpen(true)}
+          pendingApprovalsCount={stats.pendingApprovalsCount}
+          onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
+        />
+
+        {/* Main Container */}
+        <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-6">
         
         {/* Pending Approvals Notice Banner for Superiors & Admins */}
         {(currentUser.role === 'SUPERIOR' || currentUser.role === 'ADMINISTRATIVO') && stats.pendingApprovalsCount > 0 && (
@@ -519,6 +551,7 @@ export default function App() {
           </button>
         </div>
       </footer>
+      </div>
 
       {/* MODALS */}
 
