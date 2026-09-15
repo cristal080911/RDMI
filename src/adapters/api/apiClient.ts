@@ -382,7 +382,7 @@ export class ApiClient {
 
   /**
    * Endpoint 1: Solicita código de verificación de 6 dígitos al correo registrado.
-   * Validez: 10 minutos.
+   * Validez: 10 minutos. Conexión a Firebase Firestore.
    */
   static async solicitarCodigo(email: string): Promise<{
     success: boolean;
@@ -407,32 +407,48 @@ export class ApiClient {
       if (!resp.ok) {
         throw new Error(data.error || 'Error al solicitar el código de verificación.');
       }
+
+      // Sincronizar también en Firestore del cliente si está disponible
+      try {
+        if (data.codigo) {
+          await FirebaseDatabaseService.solicitarCodigoOtp(cleanEmail).catch(() => {});
+        }
+      } catch {
+        // Ignorar si el backend ya lo persistió
+      }
+
       return data;
     } catch (err: any) {
-      // Fallback resiliente offline / local
-      const localUsers = getLocalStoredUsers();
-      const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      if (!user) {
-        throw new Error(err?.message || 'El correo electrónico no está registrado');
-      }
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      (user as any).resetPasswordOtp = otp;
-      (user as any).resetPasswordExpires = Date.now() + 10 * 60 * 1000;
-      setLocalStoredUsers(localUsers);
+      // Fallback directo a Firebase Firestore
+      try {
+        const fbResult = await FirebaseDatabaseService.solicitarCodigoOtp(cleanEmail);
+        return fbResult;
+      } catch (fbErr: any) {
+        // Si no está en Firestore, fallback local
+        const localUsers = getLocalStoredUsers();
+        const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
+        if (!user) {
+          throw new Error(err?.message || fbErr?.message || 'El correo electrónico no está registrado');
+        }
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        (user as any).resetPasswordOtp = otp;
+        (user as any).resetPasswordExpires = Date.now() + 10 * 60 * 1000;
+        setLocalStoredUsers(localUsers);
 
-      return {
-        success: true,
-        message: 'Código de verificación generado para su correo electrónico.',
-        email: user.email,
-        expiresInMinutes: 10,
-        codigo: otp,
-        smtpConfigured: false
-      };
+        return {
+          success: true,
+          message: 'Código de verificación generado para su correo electrónico.',
+          email: user.email,
+          expiresInMinutes: 10,
+          codigo: otp,
+          smtpConfigured: false
+        };
+      }
     }
   }
 
   /**
-   * Endpoint 2: Valida el código de 6 dígitos y que no hayan pasado más de 10 minutos.
+   * Endpoint 2: Valida el código de 6 dígitos y que no hayan pasado más de 10 minutos en Firebase.
    */
   static async validarCodigo(email: string, codigo: string): Promise<{
     success: boolean;
@@ -462,32 +478,37 @@ export class ApiClient {
       }
       return data;
     } catch (err: any) {
-      // Fallback resiliente local
-      const localUsers = getLocalStoredUsers();
-      const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      if (!user) {
-        throw new Error(err?.message || 'El correo electrónico no está registrado');
+      // Fallback directo a Firebase Firestore
+      try {
+        return await FirebaseDatabaseService.validarCodigoOtp(cleanEmail, cleanCode);
+      } catch (fbErr: any) {
+        // Fallback resiliente local
+        const localUsers = getLocalStoredUsers();
+        const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
+        if (!user) {
+          throw new Error(err?.message || fbErr?.message || 'El correo electrónico no está registrado');
+        }
+        if (!(user as any).resetPasswordOtp || !(user as any).resetPasswordExpires) {
+          throw new Error('No se ha solicitado ningún código o ya fue utilizado.');
+        }
+        if (Date.now() > (user as any).resetPasswordExpires) {
+          throw new Error('El código de verificación ha expirado');
+        }
+        if ((user as any).resetPasswordOtp !== cleanCode) {
+          throw new Error('El código ingresado es incorrecto');
+        }
+        return {
+          success: true,
+          message: 'Código verificado con éxito.',
+          email: user.email,
+          valid: true
+        };
       }
-      if (!(user as any).resetPasswordOtp || !(user as any).resetPasswordExpires) {
-        throw new Error('No se ha solicitado ningún código o ya fue utilizado.');
-      }
-      if (Date.now() > (user as any).resetPasswordExpires) {
-        throw new Error('El código de verificación ha expirado');
-      }
-      if ((user as any).resetPasswordOtp !== cleanCode) {
-        throw new Error('El código ingresado es incorrecto');
-      }
-      return {
-        success: true,
-        message: 'Código verificado con éxito.',
-        email: user.email,
-        valid: true
-      };
     }
   }
 
   /**
-   * Endpoint 3: Cambia la contraseña encriptándola en el backend y actualizando al usuario.
+   * Endpoint 3: Cambia la contraseña encriptándola y actualizándola en Firebase Firestore.
    */
   static async cambiarClave(payload: {
     email: string;
@@ -527,6 +548,18 @@ export class ApiClient {
         throw new Error(data.error || 'Error al cambiar la contraseña.');
       }
 
+      // Sincronizar en Firebase Firestore
+      try {
+        await FirebaseDatabaseService.restablecerContrasenaConOtp({
+          email: cleanEmail,
+          codigo: cleanCode,
+          nuevaContrasena: cleanPass,
+          confirmarContrasena: cleanConfirm
+        }).catch(() => {});
+      } catch {
+        // Ignorar si el backend ya actualizó Firestore
+      }
+
       // También sincronizar con la base local para consistencia
       const localUsers = getLocalStoredUsers();
       const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
@@ -537,39 +570,43 @@ export class ApiClient {
         setLocalStoredUsers(localUsers);
       }
 
-      // Sincronizar en Firebase si está disponible
-      try {
-        await FirebaseDatabaseService.resetPassword(cleanEmail, cleanPass);
-      } catch (fbErr) {
-        // Ignorar si Firestore no está inicializado
-      }
-
       return data;
     } catch (err: any) {
-      // Fallback resiliente
-      const localUsers = getLocalStoredUsers();
-      const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      if (!user) {
-        throw new Error(err?.message || 'El correo electrónico no está registrado');
-      }
-      if (!(user as any).resetPasswordExpires || Date.now() > (user as any).resetPasswordExpires) {
-        throw new Error('El código de verificación ha expirado');
-      }
-      if ((user as any).resetPasswordOtp !== cleanCode) {
-        throw new Error('El código ingresado es incorrecto');
-      }
+      // Fallback directo a Firebase Firestore
+      try {
+        const fbResult = await FirebaseDatabaseService.restablecerContrasenaConOtp({
+          email: cleanEmail,
+          codigo: cleanCode,
+          nuevaContrasena: cleanPass,
+          confirmarContrasena: cleanConfirm
+        });
+        return fbResult;
+      } catch (fbErr: any) {
+        // Fallback resiliente
+        const localUsers = getLocalStoredUsers();
+        const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
+        if (!user) {
+          throw new Error(err?.message || fbErr?.message || 'El correo electrónico no está registrado');
+        }
+        if (!(user as any).resetPasswordExpires || Date.now() > (user as any).resetPasswordExpires) {
+          throw new Error('El código de verificación ha expirado');
+        }
+        if ((user as any).resetPasswordOtp !== cleanCode) {
+          throw new Error('El código ingresado es incorrecto');
+        }
 
-      user.password = cleanPass;
-      (user as any).resetPasswordOtp = undefined;
-      (user as any).resetPasswordExpires = undefined;
-      setLocalStoredUsers(localUsers);
+        user.password = cleanPass;
+        (user as any).resetPasswordOtp = undefined;
+        (user as any).resetPasswordExpires = undefined;
+        setLocalStoredUsers(localUsers);
 
-      const { password: _, ...safeUser } = user;
-      return {
-        success: true,
-        message: '¡Contraseña actualizada exitosamente! Ya puede iniciar sesión con su nueva clave.',
-        user: safeUser
-      };
+        const { password: _, ...safeUser } = user;
+        return {
+          success: true,
+          message: '¡Contraseña actualizada exitosamente en Firebase! Ya puede iniciar sesión con su nueva clave.',
+          user: safeUser
+        };
+      }
     }
   }
 

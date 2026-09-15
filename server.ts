@@ -10,6 +10,15 @@ import {
   generatePasswordResetEmailHtml,
   sendVerificationCodeEmail
 } from './server/mailer';
+import {
+  findUserByEmailInFirestore,
+  findUserByIdInFirestore,
+  findUserByTokenInFirestore,
+  saveUserOtpInFirestore,
+  saveUserResetTokenInFirestore,
+  updateUserPasswordInFirestore,
+  getRegisteredUsersDiagnostic
+} from './server/firestoreUsers';
 
 interface UserRecord {
   id: string;
@@ -432,24 +441,25 @@ async function startServer() {
   });
 
   // Authentication: Login
-  app.post('/api/auth/login', (req, res) => {
+  app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Debe ingresar usuario y contraseña' });
     }
 
     const cleanUsername = String(username).trim().toLowerCase();
-    const user = users.find(u => u.username.toLowerCase() === cleanUsername || u.email.toLowerCase() === cleanUsername);
+    const user = await findUserByEmailInFirestore(cleanUsername, users);
 
     if (!user) {
       return res.status(401).json({ error: 'Credenciales inválidas. Verifique su usuario o correo.' });
     }
 
-    // Verify password (supports bcrypt hash or institutional demo defaults)
-    const isBcryptHash = user.password.startsWith('$2a$') || user.password.startsWith('$2b$');
+    // Verify password (supports direct match, bcrypt hash, or institutional demo defaults)
+    const userPass = user.password || '';
+    const isBcryptHash = userPass.startsWith('$2a$') || userPass.startsWith('$2b$');
     const isPasswordValid = isBcryptHash
-      ? bcrypt.compareSync(password, user.password)
-      : user.password === password || password === 'admin123' || password === 'password123' || password === 'pass1234';
+      ? bcrypt.compareSync(password, userPass)
+      : userPass === password || password === 'admin123' || password === 'password123' || password === 'pass1234';
 
     if (!isPasswordValid) {
       return res.status(401).json({ error: 'Contraseña incorrecta.' });
@@ -598,13 +608,14 @@ async function startServer() {
       return res.status(400).json({ error: 'Debe ingresar el correo electrónico.' });
     }
 
+    // 1. Normalización flexible (trim y toLowerCase)
     const cleanEmail = String(email).trim().toLowerCase();
     if (cleanEmail.includes(' ') || /\s/.test(cleanEmail)) {
       return res.status(400).json({ error: 'El correo electrónico no puede contener espacios.' });
     }
 
-    // Consulta en la base de datos si existe un usuario registrado con ese correo exacto
-    const user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    // 1 & 2. Búsqueda flexible insensible a mayúsculas/minúsculas en Firestore (colección 'users', campos 'email' / 'correo_electronico')
+    const user = await findUserByEmailInFirestore(cleanEmail, users);
     if (!user) {
       return res.status(404).json({
         error: 'El correo electrónico no está registrado'
@@ -616,9 +627,8 @@ async function startServer() {
     const expiresInMinutes = 10;
     const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
 
-    // Guardar en la base de datos asociado al usuario
-    user.resetPasswordOtp = codigo;
-    user.resetPasswordExpires = expiresAt;
+    // Guardar en la base de datos Firestore y sincronizar en memoria asociado al usuario
+    await saveUserOtpInFirestore(user.id, codigo, expiresAt, users);
 
     // Enviar el correo electrónico mediante Nodemailer con la plantilla requerida
     const mailResult = await sendVerificationCodeEmail({
@@ -641,7 +651,7 @@ async function startServer() {
   // 2. ENDPOINT: /api/auth/validar-codigo
   // Recibe el correo y el código de 6 dígitos. Verifica que el código coincida
   // con el guardado en la base de datos y que no hayan pasado más de 10 minutos.
-  app.post('/api/auth/validar-codigo', (req, res) => {
+  app.post('/api/auth/validar-codigo', async (req, res) => {
     const { email, codigo, code } = req.body;
     const inputCode = String(codigo || code || '').trim();
     const cleanEmail = String(email || '').trim().toLowerCase();
@@ -653,7 +663,8 @@ async function startServer() {
       return res.status(400).json({ error: 'Debe ingresar el código de 6 dígitos.' });
     }
 
-    const user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    // Búsqueda flexible en la base de datos Firestore
+    const user = await findUserByEmailInFirestore(cleanEmail, users);
     if (!user) {
       return res.status(404).json({ error: 'El correo electrónico no está registrado' });
     }
@@ -722,7 +733,8 @@ async function startServer() {
       return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 20 caracteres.' });
     }
 
-    const user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    // Búsqueda flexible en la base de datos
+    const user = await findUserByEmailInFirestore(cleanEmail, users);
     if (!user) {
       return res.status(404).json({ error: 'El correo electrónico no está registrado' });
     }
@@ -747,13 +759,8 @@ async function startServer() {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(pass, salt);
 
-    // Actualizar la contraseña del usuario en la base de datos
-    user.password = hashedPassword;
-
-    // Invalidar código y expiración
-    user.resetPasswordOtp = undefined;
-    user.resetPasswordExpires = undefined;
-    user.resetPasswordToken = undefined;
+    // Actualizar la contraseña del usuario en Firestore y en memoria
+    await updateUserPasswordInFirestore(user.id, pass, hashedPassword, users);
 
     // Notificación de seguridad al correo
     try {
@@ -775,6 +782,25 @@ async function startServer() {
   });
 
   // =========================================================================
+  // 3. ENDPOINT DE PRUEBA Y DIAGNÓSTICO: USUARIOS Y CORREOS REGISTRADOS EN BD
+  // =========================================================================
+  app.get(['/api/test/registered-users', '/api/auth/diagnostic-users'], async (req, res) => {
+    try {
+      const diagnostic = await getRegisteredUsersDiagnostic(users);
+      res.json({
+        success: true,
+        ...diagnostic,
+        timestamp: new Date().toISOString()
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        error: 'Error consultando usuarios de la base de datos',
+        details: err?.message
+      });
+    }
+  });
+
+  // =========================================================================
   // 1. ENDPOINT: FORGOT PASSWORD (OLVIDÉ MI CONTRASEÑA) - COMPATIBILIDAD
   // =========================================================================
   app.post('/api/auth/forgot-password', async (req, res) => {
@@ -788,8 +814,8 @@ async function startServer() {
       return res.status(400).json({ error: 'El correo electrónico no puede contener espacios.' });
     }
 
-    // Consulta en base de datos de usuarios
-    const user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    // Consulta en base de datos de usuarios (Firestore con fallback en memoria)
+    const user = await findUserByEmailInFirestore(cleanEmail, users);
     if (!user) {
       return res.status(404).json({
         error: 'El correo electrónico no existe en el sistema institucional. Verifique que esté bien escrito o regístrese como nuevo funcionario.'
@@ -802,10 +828,8 @@ async function startServer() {
     const expiresInMinutes = 15;
     const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
 
-    // Guardar en la base de datos asociado al usuario
-    user.resetPasswordToken = token;
-    user.resetPasswordExpires = expiresAt;
-    user.resetPasswordOtp = otp;
+    // Guardar en la base de datos Firestore asociado al usuario
+    await saveUserResetTokenInFirestore(user.id, token, otp, expiresAt, users);
 
     // Construir enlace institucional seguro
     const reqHost = req.get('host') || 'localhost:3000';
@@ -838,22 +862,20 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 2. ENDPOINT: VERIFICAR TOKEN / CÓDIGO TEMPORAL
+  // 2. ENDPOINT: VERIFICAR TOKEN / CÓDIGO TEMPORAL (FIRESTORE)
   // =========================================================================
-  app.post('/api/auth/verify-reset-token', (req, res) => {
+  app.post('/api/auth/verify-reset-token', async (req, res) => {
     const { token } = req.body;
     if (!token) {
       return res.status(400).json({ error: 'Token o código de recuperación no proporcionado.' });
     }
 
     const cleanToken = String(token).trim();
-    const user = users.find(
-      u => u.resetPasswordToken === cleanToken || u.resetPasswordOtp === cleanToken
-    );
+    const user = await findUserByTokenInFirestore(cleanToken, users);
 
     if (!user || !user.resetPasswordExpires) {
       return res.status(400).json({
-        error: 'El token o código de recuperación es inválido o no existe.'
+        error: 'El token o código de recuperación es inválido o no existe en Firebase.'
       });
     }
 
@@ -874,7 +896,7 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 3. ENDPOINT: RESTABLECER CONTRASEÑA CON TOKEN Y BCRYPT
+  // 3. ENDPOINT: RESTABLECER CONTRASEÑA CON TOKEN Y BCRYPT EN FIRESTORE
   // =========================================================================
   app.post('/api/auth/reset-password-with-token', async (req, res) => {
     const { token, newPassword, confirmPassword } = req.body;
@@ -894,9 +916,7 @@ async function startServer() {
     }
 
     const cleanToken = String(token).trim();
-    const user = users.find(
-      u => u.resetPasswordToken === cleanToken || u.resetPasswordOtp === cleanToken
-    );
+    const user = await findUserByTokenInFirestore(cleanToken, users);
 
     if (!user || !user.resetPasswordExpires) {
       return res.status(400).json({
@@ -915,13 +935,8 @@ async function startServer() {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(cleanPass, salt);
 
-    // Actualizar en base de datos
-    user.password = hashedPassword;
-
-    // Invalidar token para evitar reutilización
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
-    user.resetPasswordOtp = undefined;
+    // Actualizar en base de datos Firestore y memoria
+    await updateUserPasswordInFirestore(user.id, cleanPass, hashedPassword, users);
 
     // Enviar correo de confirmación de seguridad vía Nodemailer
     try {
@@ -937,12 +952,12 @@ async function startServer() {
     const { password: _, ...safeUser } = user;
     res.json({
       success: true,
-      message: '¡Contraseña restablecida exitosamente! Se ha encriptado de forma segura con bcrypt y se ha enviado confirmación a su correo.',
+      message: '¡Contraseña restablecida exitosamente en Firebase! Se ha sincronizado en la base de datos institucional y enviado confirmación a su correo.',
       user: safeUser
     });
   });
 
-  // Authentication: Password Reset / Recovery (Legacy fallback)
+  // Authentication: Password Reset / Recovery (Direct Firebase fallback)
   app.post('/api/auth/reset-password', async (req, res) => {
     const { identifier, newPassword } = req.body;
     if (!identifier || !newPassword) {
@@ -955,59 +970,63 @@ async function startServer() {
     }
 
     const cleanIdentifier = String(identifier).trim().toLowerCase();
-    const user = users.find(
-      u => u.username.toLowerCase() === cleanIdentifier || u.email.toLowerCase() === cleanIdentifier
-    );
+    const user = await findUserByEmailInFirestore(cleanIdentifier, users);
 
     if (!user) {
       return res.status(404).json({ error: 'No se encontró ningún usuario o correo institucional con esos datos.' });
     }
 
     const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(cleanPass, salt);
+    const hashedPassword = await bcrypt.hash(cleanPass, salt);
+    await updateUserPasswordInFirestore(user.id, cleanPass, hashedPassword, users);
     const { password: _, ...safeUser } = user;
 
-    console.log(`\n[SEGURIDAD] Notificación enviada al correo ${user.email} por restablecimiento de contraseña.`);
+    console.log(`\n[SEGURIDAD] Notificación enviada al correo ${user.email} por restablecimiento de contraseña en Firebase.`);
 
     res.json({
       success: true,
-      message: `Contraseña recuperada exitosamente para ${safeUser.name}. Se ha aplicado encriptación bcrypt y enviado notificación a ${safeUser.email}.`,
+      message: `Contraseña recuperada exitosamente para ${safeUser.name}. Se ha actualizado en Firebase Firestore y enviado notificación a ${safeUser.email}.`,
       user: safeUser,
       emailNotified: safeUser.email
     });
   });
 
-  // Authentication: Change Password (Active User)
-  app.post('/api/auth/change-password', (req, res) => {
+  // Authentication: Change Password (Active User in Firestore)
+  app.post('/api/auth/change-password', async (req, res) => {
     const { userId, currentPassword, newPassword } = req.body;
     if (!userId || !currentPassword || !newPassword) {
       return res.status(400).json({ error: 'Todos los campos son requeridos.' });
     }
 
-    const cleanNewPass = String(newPassword).trim().slice(0, 10);
-    if (cleanNewPass.length < 4 || cleanNewPass.length > 10) {
-      return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 10 caracteres.' });
+    const cleanNewPass = String(newPassword).trim().slice(0, 20);
+    if (cleanNewPass.length < 4 || cleanNewPass.length > 20) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 20 caracteres.' });
     }
 
-    const user = users.find(u => u.id === userId);
+    const user = await findUserByIdInFirestore(userId, users);
     if (!user) {
-      return res.status(404).json({ error: 'Usuario no encontrado.' });
+      return res.status(404).json({ error: 'Usuario no encontrado en la base de datos.' });
     }
 
-    if (
-      user.password !== currentPassword &&
-      currentPassword !== 'admin123' &&
-      currentPassword !== 'password123'
-    ) {
+    const userPass = user.password || '';
+    const isBcrypt = userPass.startsWith('$2a$') || userPass.startsWith('$2b$');
+    const isCurrentValid = isBcrypt
+      ? bcrypt.compareSync(currentPassword, userPass)
+      : userPass === currentPassword || currentPassword === 'admin123' || currentPassword === 'password123';
+
+    if (!isCurrentValid) {
       return res.status(401).json({ error: 'La contraseña actual ingresada es incorrecta.' });
     }
 
-    user.password = cleanNewPass;
-    console.log(`\n[SEGURIDAD] Notificación enviada al correo ${user.email} por cambio de contraseña desde perfil.`);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(cleanNewPass, salt);
+    await updateUserPasswordInFirestore(user.id, cleanNewPass, hashedPassword, users);
+
+    console.log(`\n[SEGURIDAD] Notificación enviada al correo ${user.email} por cambio de contraseña desde perfil en Firebase.`);
 
     res.json({
       success: true,
-      message: `Contraseña actualizada exitosamente. Se ha enviado una confirmación a su correo institucional (${user.email}).`,
+      message: `Contraseña actualizada exitosamente en Firebase. Se ha enviado una confirmación a su correo institucional (${user.email}).`,
       emailNotified: user.email
     });
   });

@@ -57,6 +57,31 @@
         "adminCode": {
           "type": "string",
           "description": "Unique security access code required to unlock and log in to administrative accounts"
+        },
+        "password": {
+          "type": "string",
+          "description": "User credential password"
+        },
+        "passwordHash": {
+          "type": "string",
+          "description": "Bcrypt hashed password for server-side verification"
+        },
+        "resetPasswordOtp": {
+          "type": "string",
+          "description": "6-digit OTP code for password recovery"
+        },
+        "resetPasswordExpires": {
+          "type": "number",
+          "description": "Epoch timestamp in milliseconds when the OTP code or reset token expires"
+        },
+        "resetPasswordToken": {
+          "type": "string",
+          "description": "Cryptographic token for secure link recovery"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when credentials or user record were last updated"
         }
       },
       "required": ["id", "username", "email", "name", "role", "status", "createdAt"]

@@ -11,12 +11,18 @@ import {
   where,
   onSnapshot
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { db, auth } from '../lib/firebase';
 import { MaintenanceItem, DamageReport, User, ProgressAdvance, InstitutionalStats, UserRole, UrgencyLevel, AreaType, ItemStatus } from '../core/domain/entities';
 import { EmailNotificationService } from './emailNotificationService';
 
 export interface FirestoreUserRecord extends User {
   password?: string;
+  passwordHash?: string;
+  resetPasswordOtp?: string;
+  resetPasswordExpires?: number;
+  resetPasswordToken?: string;
+  updatedAt?: string;
 }
 
 /**
@@ -810,6 +816,227 @@ export class FirebaseDatabaseService {
     return {
       success: true,
       message: `Su contraseña ha sido modificada exitosamente. Se ha enviado una confirmación formal a su correo institucional (${found.email}).`
+    };
+  }
+
+  /**
+   * Genera y guarda un código OTP de 6 dígitos en el documento del usuario en Firebase Firestore.
+   */
+  static async solicitarCodigoOtp(email: string): Promise<{
+    success: boolean;
+    message: string;
+    email: string;
+    codigo: string;
+    expiresInMinutes: number;
+    smtpConfigured?: boolean;
+  }> {
+    await this.ensureInitialized();
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    if (!cleanEmail) {
+      throw new Error('Debe ingresar el correo electrónico institucional registrado.');
+    }
+
+    const users = await this.getUsers();
+    const found = users.find(
+      u => u.email.toLowerCase() === cleanEmail || (u as any).correo_electronico?.toLowerCase() === cleanEmail
+    );
+
+    if (!found) {
+      throw new Error('El correo electrónico no está registrado en la base de datos de la institución.');
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresInMinutes = 10;
+    const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
+
+    const userDocRef = doc(db, 'users', found.id);
+    await updateDoc(userDocRef, {
+      resetPasswordOtp: otp,
+      resetPasswordExpires: expiresAt,
+      updatedAt: new Date().toISOString()
+    });
+
+    // Enlace complementario opcional con Firebase Auth si el correo está registrado en Auth
+    try {
+      if (auth) {
+        await sendPasswordResetEmail(auth, cleanEmail).catch(() => {});
+      }
+    } catch {
+      // Ignorar si el usuario solo reside en Firestore
+    }
+
+    // Despachar correo institucional con el código de 6 dígitos
+    try {
+      await EmailNotificationService.sendSecurityEmailNotification({
+        type: 'PASSWORD_RESET',
+        toEmail: found.email,
+        recipientName: found.name,
+        recipientUsername: found.username,
+        roleTitle: found.roleTitle
+      });
+    } catch (e) {
+      console.warn('Advertencia al enviar correo institucional:', e);
+    }
+
+    return {
+      success: true,
+      message: 'Código de verificación de 6 dígitos generado y registrado en Firebase.',
+      email: found.email,
+      codigo: otp,
+      expiresInMinutes
+    };
+  }
+
+  /**
+   * Valida el código OTP de 6 dígitos directamente en el documento de Firebase Firestore.
+   */
+  static async validarCodigoOtp(
+    email: string,
+    codigo: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    email: string;
+    valid: boolean;
+  }> {
+    await this.ensureInitialized();
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanCode = String(codigo || '').trim();
+
+    if (!cleanEmail) {
+      throw new Error('El correo electrónico es requerido.');
+    }
+    if (!cleanCode) {
+      throw new Error('Debe ingresar el código de verificación de 6 dígitos.');
+    }
+
+    const users = await this.getUsers();
+    const found = users.find(
+      u => u.email.toLowerCase() === cleanEmail || (u as any).correo_electronico?.toLowerCase() === cleanEmail
+    );
+
+    if (!found) {
+      throw new Error('El correo electrónico no está registrado.');
+    }
+
+    const userDocRef = doc(db, 'users', found.id);
+    const snap = await getDoc(userDocRef);
+    const data = (snap.exists() ? snap.data() : found) as FirestoreUserRecord;
+
+    if (!data.resetPasswordOtp || !data.resetPasswordExpires) {
+      throw new Error('La sesión de verificación ha vencido o no ha solicitado un código. Solicite un nuevo código.');
+    }
+
+    if (Date.now() > data.resetPasswordExpires) {
+      throw new Error('El código de verificación ha expirado (límite de 10 minutos). Solicite uno nuevo.');
+    }
+
+    if (data.resetPasswordOtp !== cleanCode) {
+      throw new Error('El código ingresado es incorrecto. Verifique el código de 6 dígitos.');
+    }
+
+    return {
+      success: true,
+      message: 'Código verificado con éxito en Firebase.',
+      email: found.email,
+      valid: true
+    };
+  }
+
+  /**
+   * Restablece la contraseña en Firebase Firestore tras verificar el código OTP.
+   */
+  static async restablecerContrasenaConOtp(payload: {
+    email: string;
+    codigo: string;
+    nuevaContrasena: string;
+    confirmarContrasena?: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    user: User;
+  }> {
+    await this.ensureInitialized();
+    const { email, codigo, nuevaContrasena, confirmarContrasena } = payload;
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanCode = String(codigo || '').trim();
+    const cleanPass = String(nuevaContrasena || '').trim().slice(0, 20);
+
+    if (!cleanEmail) {
+      throw new Error('El correo electrónico es requerido.');
+    }
+    if (!cleanCode) {
+      throw new Error('El código de verificación es requerido.');
+    }
+    if (!cleanPass) {
+      throw new Error('Debe ingresar la nueva contraseña.');
+    }
+    if (confirmarContrasena && cleanPass !== String(confirmarContrasena).trim().slice(0, 20)) {
+      throw new Error('Las contraseñas no coinciden. Verifique ambos campos.');
+    }
+    if (cleanPass.length < 4 || cleanPass.length > 20) {
+      throw new Error('La nueva contraseña debe tener entre 4 y 20 caracteres.');
+    }
+
+    const users = await this.getUsers();
+    const found = users.find(
+      u => u.email.toLowerCase() === cleanEmail || (u as any).correo_electronico?.toLowerCase() === cleanEmail
+    );
+
+    if (!found) {
+      throw new Error('El correo electrónico no está registrado.');
+    }
+
+    const userDocRef = doc(db, 'users', found.id);
+    const snap = await getDoc(userDocRef);
+    const data = (snap.exists() ? snap.data() : found) as FirestoreUserRecord;
+
+    if (!data.resetPasswordOtp || !data.resetPasswordExpires) {
+      throw new Error('La sesión de verificación ha vencido o el código ya fue utilizado.');
+    }
+
+    if (Date.now() > data.resetPasswordExpires) {
+      throw new Error('El código de verificación ha expirado.');
+    }
+
+    if (data.resetPasswordOtp !== cleanCode) {
+      throw new Error('El código ingresado es incorrecto.');
+    }
+
+    // Actualizar documento en Firebase Firestore
+    await updateDoc(userDocRef, {
+      password: cleanPass,
+      resetPasswordOtp: null,
+      resetPasswordExpires: null,
+      resetPasswordToken: null,
+      updatedAt: new Date().toISOString()
+    });
+
+    const updatedUser = {
+      ...found,
+      password: cleanPass,
+      resetPasswordOtp: undefined,
+      resetPasswordExpires: undefined
+    };
+    const { password: _, ...safeUser } = updatedUser;
+
+    // Enviar correo de confirmación de seguridad
+    try {
+      await EmailNotificationService.sendSecurityEmailNotification({
+        type: 'PASSWORD_RESET',
+        toEmail: safeUser.email,
+        recipientName: safeUser.name,
+        recipientUsername: safeUser.username,
+        roleTitle: safeUser.roleTitle
+      });
+    } catch (e) {
+      console.warn('Advertencia al enviar correo institucional:', e);
+    }
+
+    return {
+      success: true,
+      message: '¡Contraseña actualizada exitosamente en Firebase! Ya puede iniciar sesión con su nueva clave.',
+      user: safeUser
     };
   }
 

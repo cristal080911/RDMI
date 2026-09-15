@@ -143,7 +143,10 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
     setError(null);
     setSuccessInfo(null);
 
+    // 1. Normalización en frontend: trim y toLowerCase
     const cleanEmail = emailInput.trim().toLowerCase();
+    setEmailInput(cleanEmail);
+
     if (!cleanEmail) {
       setError('Por favor ingresa tu correo electrónico.');
       return;
@@ -505,6 +508,9 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
                     onChange={(e) => {
                       setEmailInput(e.target.value);
                       setError(null);
+                    }}
+                    onBlur={(e) => {
+                      setEmailInput(e.target.value.trim().toLowerCase());
                     }}
                     placeholder="ejemplo: funcionario@gmail.com"
                     className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-purple-600 transition-all font-medium placeholder:text-slate-400 shadow-sm"
