@@ -12,22 +12,27 @@ import {
   Download,
   Copy,
   Check,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { User, UserRole } from '../core/domain/entities';
+import { ApiClient } from '../adapters/api/apiClient';
 
 interface AuthorizedPersonnelModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: User | null;
   onFetchUsers: () => Promise<User[]>;
+  onDeleteUser?: (userId: string) => Promise<void>;
 }
 
 export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> = ({
   isOpen,
   onClose,
   currentUser,
-  onFetchUsers
+  onFetchUsers,
+  onDeleteUser
 }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -36,7 +41,12 @@ export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> =
   const [includeSignatures, setIncludeSignatures] = useState(true);
   const [includeStatsSummary, setIncludeStatsSummary] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [feedback, setFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const printAreaRef = useRef<HTMLDivElement>(null);
+
+  const isAdministrative = currentUser?.role === 'ADMINISTRATIVO' || currentUser?.role === 'SUPERIOR';
 
   const loadData = async () => {
     setIsLoading(true);
@@ -49,6 +59,32 @@ export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> =
       console.error('Error fetching authorized users:', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!userToDelete || !currentUser) return;
+    setIsDeletingUser(true);
+    setFeedback(null);
+    try {
+      if (onDeleteUser) {
+        await onDeleteUser(userToDelete.id);
+      } else {
+        await ApiClient.deleteUser(userToDelete.id, currentUser);
+      }
+      setFeedback({
+        text: `Usuario ${userToDelete.name} eliminado exitosamente.`,
+        type: 'success'
+      });
+      setUserToDelete(null);
+      await loadData();
+    } catch (err: any) {
+      setFeedback({
+        text: err.message || 'Error al eliminar usuario.',
+        type: 'error'
+      });
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -311,7 +347,7 @@ export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> =
                   LISTADO OFICIAL DE PERSONAL INSTITUCIONAL AUTORIZADO
                 </h1>
                 <p className="text-xs text-slate-600 font-medium">
-                  Sistema de Gestión de Mantenimiento de Infraestructura (SIGMA)
+                  Sistema de Gestión de Mantenimiento de Infraestructura (RDMI)
                 </p>
               </div>
             </div>
@@ -383,6 +419,15 @@ export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> =
             </div>
           )}
 
+          {/* Action Feedback */}
+          {feedback && (
+            <div className={`no-print p-3 rounded-xl border text-xs font-bold ${
+              feedback.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'
+            }`}>
+              {feedback.text}
+            </div>
+          )}
+
           {/* Main Table of Authorized Users */}
           <div className="bg-white rounded-2xl border border-[#DDD5C2] shadow-sm overflow-hidden print:border-black print:rounded-none">
             <div className="overflow-x-auto">
@@ -396,19 +441,22 @@ export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> =
                     <th className="py-2.5 px-3 border-r border-slate-700 print:border-black">Departamento</th>
                     <th className="py-2.5 px-3 border-r border-slate-700 print:border-black">Correo Institucional</th>
                     <th className="py-2.5 px-3 border-r border-slate-700 print:border-black">Usuario</th>
-                    <th className="py-2.5 px-3 text-center">Estado</th>
+                    <th className="py-2.5 px-3 text-center border-r border-slate-700 print:border-none">Estado</th>
+                    {isAdministrative && (
+                      <th className="py-2.5 px-3 text-center print:hidden">Acción</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#EAE3D2] print:divide-black text-xs text-slate-800">
                   {isLoading ? (
                     <tr>
-                      <td colSpan={8} className="py-10 text-center text-slate-500 font-semibold">
+                      <td colSpan={isAdministrative ? 9 : 8} className="py-10 text-center text-slate-500 font-semibold">
                         Cargando directorio de personal...
                       </td>
                     </tr>
                   ) : filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-10 text-center text-slate-500 font-semibold">
+                      <td colSpan={isAdministrative ? 9 : 8} className="py-10 text-center text-slate-500 font-semibold">
                         No se encontraron registros de personal con los filtros aplicados.
                       </td>
                     </tr>
@@ -456,12 +504,28 @@ export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> =
                         <td className="py-2.5 px-3 font-mono text-[11px] text-purple-900 font-semibold border-r border-[#EAE3D2] print:border-black print:text-black">
                           {user.username}
                         </td>
-                        <td className="py-2.5 px-3 text-center">
+                        <td className="py-2.5 px-3 text-center border-r border-[#EAE3D2] print:border-none">
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 print:border-none print:bg-transparent print:text-black">
                             <CheckCircle2 className="w-3 h-3 text-emerald-700 print:hidden" />
                             AUTORIZADO
                           </span>
                         </td>
+                        {isAdministrative && (
+                          <td className="py-2.5 px-3 text-center print:hidden">
+                            {user.id !== currentUser?.id ? (
+                              <button
+                                type="button"
+                                onClick={() => setUserToDelete(user)}
+                                className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-900 border border-red-200 transition-colors cursor-pointer"
+                                title={`Eliminar usuario institucional ${user.name} (Solo Administrativos)`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-medium italic">Tú</span>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}
@@ -510,11 +574,11 @@ export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> =
                 <div className="space-y-1">
                   <div className="border-2 border-dashed border-slate-400 rounded-xl w-4/5 mx-auto h-14 flex items-center justify-center p-2">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">
-                      SELLO INSTITUCIONAL<br />SIGMA CENTRAL
+                      SELLO INSTITUCIONAL<br />RDMI CENTRAL
                     </span>
                   </div>
                   <p className="font-bold text-xs text-slate-900 mt-1">Folio de Certificación</p>
-                  <p className="text-[10px] text-slate-500 font-mono">SIGMA-AUTH-{Date.now().toString().slice(-6)}</p>
+                  <p className="text-[10px] text-slate-500 font-mono">RDMI-AUTH-{Date.now().toString().slice(-6)}</p>
                 </div>
               </div>
 
@@ -551,6 +615,61 @@ export const AuthorizedPersonnelModal: React.FC<AuthorizedPersonnelModalProps> =
         </div>
 
       </div>
+
+      {/* Confirmation Modal for User Deletion */}
+      {userToDelete && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-[#FDFBF7] rounded-3xl border border-red-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150 text-slate-800">
+            <div className="flex items-start gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0 border border-red-200 shadow-xs">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-black uppercase tracking-wider mb-1">
+                  Acción Administrativa Irreversible
+                </div>
+                <h4 className="font-black text-slate-900 text-base">¿Eliminar Usuario Institucional?</h4>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Esta acción eliminará al funcionario de la base de datos institucional y no podrá acceder al sistema:
+                </p>
+
+                <div className="mt-3 p-3 rounded-xl bg-white border border-slate-200 text-xs space-y-1 shadow-xs">
+                  <p className="font-bold text-slate-900 text-sm">{userToDelete.name}</p>
+                  <p className="text-slate-600">Usuario: <span className="font-mono text-purple-950 font-bold">{userToDelete.username}</span></p>
+                  <p className="text-slate-600">Correo: <span className="font-medium text-slate-800">{userToDelete.email}</span></p>
+                  <p className="text-slate-600">Rol: <span className="font-bold text-indigo-900">{userToDelete.role} ({userToDelete.roleTitle})</span></p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={() => setUserToDelete(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center gap-2 shadow-md shadow-red-950/20 transition-all transform hover:-translate-y-0.5 cursor-pointer disabled:opacity-50 disabled:transform-none"
+              >
+                {isDeletingUser ? (
+                  <span>Eliminando usuario...</span>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Eliminar Usuario</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

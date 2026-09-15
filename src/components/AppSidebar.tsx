@@ -105,23 +105,12 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       <div className="p-4 border-b border-indigo-950/90 flex items-center justify-between">
         <div className="flex items-center gap-2.5 overflow-hidden">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-700 via-indigo-600 to-emerald-500 flex items-center justify-center shadow-lg shadow-purple-950/60 ring-2 ring-purple-400/30 shrink-0">
-            <Shield className="w-5 h-5 text-white" />
+            <Menu className="w-5 h-5 text-white" />
           </div>
           {!isCollapsed && (
-            <div className="min-w-0 transition-opacity duration-200">
-              <h1 className="text-sm font-black tracking-tight text-white flex items-center gap-1">
-                <span className="text-emerald-400">SIGMA</span>
-                <span className="text-purple-300">Navegación</span>
-              </h1>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40">
-                  En Vivo
-                </span>
-                <span className="text-[10px] text-slate-400 truncate">
-                  Panel Lateral
-                </span>
-              </div>
-            </div>
+            <span className="text-base font-black tracking-tight text-white">
+              Menú
+            </span>
           )}
         </div>
 
@@ -129,7 +118,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
           title={isCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
-          className="hidden lg:flex p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-indigo-950 transition-colors cursor-pointer"
+          className="hidden lg:flex p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-indigo-950 transition-colors cursor-pointer items-center justify-center"
         >
           {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>

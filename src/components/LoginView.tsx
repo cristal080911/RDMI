@@ -296,7 +296,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
           </div>
           <div>
             <h1 className="text-base sm:text-xl font-black tracking-tight text-white flex items-center gap-1.5">
-              <span className="text-emerald-400">SIGMA</span>
+              <span className="text-emerald-400">RDMI</span>
               <span className="text-purple-300">Institucional</span>
             </h1>
             <p className="text-[11px] sm:text-xs text-slate-300">
@@ -953,7 +953,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
       {/* Page Footer */}
       <footer className="max-w-6xl w-full mx-auto py-3 text-center text-xs text-slate-400 border-t border-indigo-950/60 flex flex-col sm:flex-row items-center justify-between gap-2">
-        <p>© SIGMA Institucional - Control Integral de Infraestructura y Equipamiento</p>
+        <p>© RDMI Institucional - Control Integral de Infraestructura y Equipamiento</p>
         <div className="flex items-center gap-3 text-[11px]">
           <span className="text-emerald-400">⚡ Eléctricos</span>
           <span className="text-blue-400">🏢 Estructurales</span>

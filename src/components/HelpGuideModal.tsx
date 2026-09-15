@@ -103,7 +103,7 @@ export const HelpGuideModal: React.FC<HelpGuideModalProps> = ({
                   Manual Interactivo de Usuario
                 </span>
                 <span className="text-[10px] text-purple-200 bg-purple-900/60 px-2 py-0.5 rounded-full hidden sm:inline">
-                  SIGMA Institucional
+                  RDMI Institucional
                 </span>
               </div>
               <h2 className="text-lg sm:text-2xl font-black text-white mt-1 tracking-tight">
@@ -206,7 +206,7 @@ export const HelpGuideModal: React.FC<HelpGuideModalProps> = ({
               <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 text-purple-950">
                 <div className="flex items-center gap-2 font-black text-sm text-purple-900 mb-1">
                   <Sparkles className="w-4 h-4 text-purple-700" />
-                  <span>Bienvenido a SIGMA Institucional</span>
+                  <span>Bienvenido a RDMI Institucional</span>
                 </div>
                 <p className="text-xs text-purple-900/90 leading-relaxed">
                   Esta plataforma centraliza y simplifica el control, supervisión, reporte de daños y seguimiento del mantenimiento en toda la institución educativa. Sigue estos 4 pasos básicos para dominar la aplicación:
@@ -589,7 +589,7 @@ export const HelpGuideModal: React.FC<HelpGuideModalProps> = ({
         <div className="p-3.5 sm:p-4 bg-[#F5EFE4] border-t border-[#ECE5D8] flex flex-col sm:flex-row items-center justify-between gap-2.5 shrink-0">
           <div className="flex items-center gap-2 text-[11px] text-slate-600">
             <Shield className="w-4 h-4 text-purple-700" />
-            <span>SIGMA Institucional • Mantenimiento Escolar Confiable</span>
+            <span>RDMI Institucional • Mantenimiento Escolar Confiable</span>
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">

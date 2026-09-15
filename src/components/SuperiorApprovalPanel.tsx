@@ -12,7 +12,9 @@ import {
   Printer,
   KeyRound,
   Edit3,
-  Save
+  Save,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { User, UserRole } from '../core/domain/entities';
 import { ApiClient } from '../adapters/api/apiClient';
@@ -24,6 +26,7 @@ interface SuperiorApprovalPanelProps {
   onApproveUser: (userId: string, approve: boolean, newRole?: UserRole) => Promise<void>;
   onRefreshUsers: () => Promise<{ pending: User[]; all: User[] }>;
   onOpenPrintModal?: () => void;
+  onDeleteUser?: (userId: string) => Promise<void>;
 }
 
 export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
@@ -32,7 +35,8 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
   currentUser,
   onApproveUser,
   onRefreshUsers,
-  onOpenPrintModal
+  onOpenPrintModal,
+  onDeleteUser
 }) => {
   const [tab, setTab] = useState<'PENDING' | 'ACTIVE'>('PENDING');
   const [pendingUsers, setPendingUsers] = useState<User[]>([]);
@@ -43,6 +47,11 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
   const [editingCodeUserId, setEditingCodeUserId] = useState<string | null>(null);
   const [newAdminCodeVal, setNewAdminCodeVal] = useState<string>('');
   const [savingCode, setSavingCode] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+
+  // Exclusividad: Solo para personal administrativo o directivo superior
+  const isAdministrative = currentUser?.role === 'ADMINISTRATIVO' || currentUser?.role === 'SUPERIOR';
 
   const loadData = async () => {
     setIsLoading(true);
@@ -82,6 +91,50 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
       });
     } finally {
       setProcessingId(null);
+    }
+  };
+
+  const handleDeleteUserClick = (user: User) => {
+    if (!isAdministrative) {
+      setFeedback({
+        text: 'Acceso denegado: Solo el personal administrativo puede eliminar usuarios.',
+        type: 'error'
+      });
+      return;
+    }
+    if (currentUser && currentUser.id === user.id) {
+      setFeedback({
+        text: 'No puede eliminar su propia cuenta administrativa.',
+        type: 'error'
+      });
+      return;
+    }
+    setUserToDelete(user);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!userToDelete || !currentUser) return;
+    setIsDeletingUser(true);
+    setFeedback(null);
+    try {
+      if (onDeleteUser) {
+        await onDeleteUser(userToDelete.id);
+      } else {
+        await ApiClient.deleteUser(userToDelete.id, currentUser);
+      }
+      setFeedback({
+        text: `Usuario ${userToDelete.name} (${userToDelete.username}) eliminado permanentemente del sistema.`,
+        type: 'success'
+      });
+      setUserToDelete(null);
+      await loadData();
+    } catch (err: any) {
+      setFeedback({
+        text: err.message || 'Error al eliminar usuario.',
+        type: 'error'
+      });
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -245,6 +298,18 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
                         <UserX className="w-3.5 h-3.5" />
                         <span>Rechazar</span>
                       </button>
+
+                      {isAdministrative && (
+                        <button
+                          onClick={() => handleDeleteUserClick(user)}
+                          disabled={processingId === user.id}
+                          className="px-2.5 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold flex items-center gap-1 border border-red-200 transition-colors cursor-pointer"
+                          title="Eliminar usuario permanentemente (Solo Administrativos)"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Eliminar</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -345,17 +410,31 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
                         </div>
                       )}
                     </div>
-                    <div className="text-right">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        user.role === 'SUPERIOR'
-                          ? 'bg-purple-100 text-purple-900 border border-purple-300'
-                          : user.role === 'ADMINISTRATIVO'
-                          ? 'bg-blue-100 text-blue-900 border border-blue-300'
-                          : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                      }`}>
-                        {user.role}
-                      </span>
-                      <p className="text-[10px] text-slate-500 mt-0.5 font-medium">{user.roleTitle}</p>
+                    <div className="flex items-center gap-2.5">
+                      <div className="text-right">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          user.role === 'SUPERIOR'
+                            ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                            : user.role === 'ADMINISTRATIVO'
+                            ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                            : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                        }`}>
+                          {user.role}
+                        </span>
+                        <p className="text-[10px] text-slate-500 mt-0.5 font-medium">{user.roleTitle}</p>
+                      </div>
+
+                      {/* Botón de eliminación exclusivo para administrativos y superiores */}
+                      {isAdministrative && user.id !== currentUser?.id && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteUserClick(user)}
+                          className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-900 border border-red-200 shadow-xs transition-colors cursor-pointer"
+                          title={`Eliminar permanentemente a ${user.name} (Solo Administrativos)`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -387,6 +466,61 @@ export const SuperiorApprovalPanel: React.FC<SuperiorApprovalPanelProps> = ({
         </div>
 
       </div>
+
+      {/* Modal de Confirmación de Eliminación de Usuario */}
+      {userToDelete && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-[#FDFBF7] rounded-3xl border border-red-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150 text-slate-800">
+            <div className="flex items-start gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center shrink-0 border border-red-200 shadow-xs">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-[10px] font-black uppercase tracking-wider mb-1">
+                  Acción Administrativa Irreversible
+                </div>
+                <h4 className="font-black text-slate-900 text-base">¿Eliminar Usuario Institucional?</h4>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Esta acción eliminará al funcionario de la base de datos institucional y no podrá acceder al sistema:
+                </p>
+
+                <div className="mt-3 p-3 rounded-xl bg-white border border-slate-200 text-xs space-y-1 shadow-xs">
+                  <p className="font-bold text-slate-900 text-sm">{userToDelete.name}</p>
+                  <p className="text-slate-600">Usuario: <span className="font-mono text-purple-950 font-bold">{userToDelete.username}</span></p>
+                  <p className="text-slate-600">Correo: <span className="font-medium text-slate-800">{userToDelete.email}</span></p>
+                  <p className="text-slate-600">Rol: <span className="font-bold text-indigo-900">{userToDelete.role} ({userToDelete.roleTitle})</span></p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={() => setUserToDelete(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingUser}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold flex items-center gap-2 shadow-md shadow-red-950/20 transition-all transform hover:-translate-y-0.5 cursor-pointer disabled:opacity-50 disabled:transform-none"
+              >
+                {isDeletingUser ? (
+                  <span>Eliminando usuario...</span>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Eliminar Usuario</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

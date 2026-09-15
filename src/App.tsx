@@ -54,7 +54,7 @@ import { AppSidebar } from './components/AppSidebar';
 export default function App() {
   // Authentication State: defaults to null if not stored in localStorage
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('sigma_institutional_user');
+    const saved = localStorage.getItem('rdmi_institutional_user') || localStorage.getItem('sigma_institutional_user');
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -209,6 +209,7 @@ export default function App() {
   const handleLogin = async (username: string, pass: string, adminCode?: string) => {
     const res = await ApiClient.login(username, pass, adminCode);
     setCurrentUser(res.user);
+    localStorage.setItem('rdmi_institutional_user', JSON.stringify(res.user));
     localStorage.setItem('sigma_institutional_user', JSON.stringify(res.user));
     await fetchData();
     return res.user;
@@ -224,6 +225,7 @@ export default function App() {
   // Handle Logout
   const handleLogout = () => {
     setCurrentUser(null);
+    localStorage.removeItem('rdmi_institutional_user');
     localStorage.removeItem('sigma_institutional_user');
   };
 
@@ -303,6 +305,15 @@ export default function App() {
   // Handle Superior User Approval
   const handleApproveUser = async (userId: string, approve: boolean, newRole?: any) => {
     await ApiClient.approveUser(userId, approve, currentUser?.name || 'Directivo Superior', newRole);
+    await fetchData();
+  };
+
+  // Handle User Deletion (Exclusive to Administrative / Superior roles)
+  const handleDeleteUser = async (userId: string) => {
+    if (!currentUser) return;
+    await ApiClient.deleteUser(userId, currentUser);
+    setSyncFeedback('Usuario eliminado definitivamente de los registros institucionales.');
+    setTimeout(() => setSyncFeedback(null), 4000);
     await fetchData();
   };
 
@@ -667,6 +678,7 @@ export default function App() {
         currentUser={currentUser}
         onApproveUser={handleApproveUser}
         onRefreshUsers={handleRefreshUsers}
+        onDeleteUser={handleDeleteUser}
         onOpenPrintModal={() => {
           setIsApprovalPanelOpen(false);
           setIsAuthorizedPersonnelModalOpen(true);
@@ -679,6 +691,7 @@ export default function App() {
         onClose={() => setIsAuthorizedPersonnelModalOpen(false)}
         currentUser={currentUser}
         onFetchUsers={ApiClient.getAllUsers}
+        onDeleteUser={handleDeleteUser}
       />
 
       {/* 8. Hexagonal Architecture Explainer Modal */}

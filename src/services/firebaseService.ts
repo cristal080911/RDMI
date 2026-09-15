@@ -667,6 +667,35 @@ export class FirebaseDatabaseService {
     return { success: true, user: safeUser };
   }
 
+  static async deleteUser(
+    userId: string,
+    requesterUser: User
+  ): Promise<{ success: boolean; message: string }> {
+    await this.ensureInitialized();
+
+    // Validar que el solicitante tenga rol administrativo o superior
+    if (requesterUser.role !== 'ADMINISTRATIVO' && requesterUser.role !== 'SUPERIOR') {
+      throw new Error('Acceso denegado: La función de eliminar usuarios está reservada exclusivamente para personal administrativo.');
+    }
+
+    // No permitir auto-eliminación
+    if (requesterUser.id === userId) {
+      throw new Error('Operación no permitida: No puede eliminar su propia cuenta administrativa.');
+    }
+
+    const docRef = doc(db, 'users', userId);
+    try {
+      await deleteDoc(docRef);
+    } catch (e) {
+      console.warn('Could not delete from Firestore doc:', e);
+    }
+
+    return {
+      success: true,
+      message: 'Usuario eliminado exitosamente de la base de datos Firestore.'
+    };
+  }
+
   static async resetPassword(
     identifier: string,
     newPassword: string

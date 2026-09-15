@@ -7,7 +7,8 @@ import { createServer as createViteServer } from 'vite';
 import {
   sendPasswordResetEmail,
   sendPasswordChangedEmail,
-  generatePasswordResetEmailHtml
+  generatePasswordResetEmailHtml,
+  sendVerificationCodeEmail
 } from './server/mailer';
 
 interface UserRecord {
@@ -581,10 +582,200 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 1. ENDPOINT: FORGOT PASSWORD (OLVIDÉ MI CONTRASEÑA)
-  // - Verifica si el correo existe en la base de datos
-  // - Genera token temporal de 15 minutos y código OTP
-  // - Envía correo con plantilla HTML mediante Nodemailer (Gmail / SMTP)
+  // FLUJO DE RECUPERACIÓN DE CONTRASEÑA POR CORREO ELECTRÓNICO (GMAIL / SMTP)
+  // =========================================================================
+
+  // 1. ENDPOINT: /api/auth/solicitar-codigo
+  // Recibe el correo ingresado por el usuario. Consulta en la base de datos si
+  // existe un usuario registrado con ese correo exacto.
+  // - Si NO existe: Devuelve un error claro ("El correo electrónico no está registrado").
+  // - Si SÍ existe: Genera un código de verificación numérico aleatorio de 6 dígitos (OTP)
+  //   y una fecha de expiración de 10 minutos. Guarda este código y expiración en la
+  //   base de datos asociado al usuario, y envía el correo mediante Nodemailer.
+  app.post('/api/auth/solicitar-codigo', async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Debe ingresar el correo electrónico.' });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    if (cleanEmail.includes(' ') || /\s/.test(cleanEmail)) {
+      return res.status(400).json({ error: 'El correo electrónico no puede contener espacios.' });
+    }
+
+    // Consulta en la base de datos si existe un usuario registrado con ese correo exacto
+    const user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    if (!user) {
+      return res.status(404).json({
+        error: 'El correo electrónico no está registrado'
+      });
+    }
+
+    // Generar código numérico aleatorio de 6 dígitos (OTP) y expiración de 10 minutos
+    const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresInMinutes = 10;
+    const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
+
+    // Guardar en la base de datos asociado al usuario
+    user.resetPasswordOtp = codigo;
+    user.resetPasswordExpires = expiresAt;
+
+    // Enviar el correo electrónico mediante Nodemailer con la plantilla requerida
+    const mailResult = await sendVerificationCodeEmail({
+      toEmail: user.email,
+      recipientName: user.name,
+      code: codigo,
+      expiresInMinutes
+    });
+
+    res.json({
+      success: true,
+      message: 'Código de verificación enviado al correo electrónico.',
+      email: user.email,
+      expiresInMinutes,
+      codigo: process.env.NODE_ENV !== 'production' ? codigo : undefined,
+      smtpConfigured: mailResult.smtpConfigured
+    });
+  });
+
+  // 2. ENDPOINT: /api/auth/validar-codigo
+  // Recibe el correo y el código de 6 dígitos. Verifica que el código coincida
+  // con el guardado en la base de datos y que no hayan pasado más de 10 minutos.
+  app.post('/api/auth/validar-codigo', (req, res) => {
+    const { email, codigo, code } = req.body;
+    const inputCode = String(codigo || code || '').trim();
+    const cleanEmail = String(email || '').trim().toLowerCase();
+
+    if (!cleanEmail) {
+      return res.status(400).json({ error: 'Debe ingresar el correo electrónico.' });
+    }
+    if (!inputCode) {
+      return res.status(400).json({ error: 'Debe ingresar el código de 6 dígitos.' });
+    }
+
+    const user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    if (!user) {
+      return res.status(404).json({ error: 'El correo electrónico no está registrado' });
+    }
+
+    if (!user.resetPasswordOtp || !user.resetPasswordExpires) {
+      return res.status(400).json({
+        error: 'No se ha solicitado ningún código de verificación para este correo o el código ya fue utilizado.'
+      });
+    }
+
+    // Verificar si han pasado más de 10 minutos
+    if (Date.now() > user.resetPasswordExpires) {
+      return res.status(400).json({
+        error: 'El código de verificación ha expirado'
+      });
+    }
+
+    // Verificar que el código coincida con el guardado en la base de datos
+    if (user.resetPasswordOtp !== inputCode) {
+      return res.status(400).json({
+        error: 'El código ingresado es incorrecto'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Código verificado con éxito.',
+      email: user.email,
+      valid: true
+    });
+  });
+
+  // 3. ENDPOINT: /api/auth/cambiar-clave
+  // Una vez validado el código, recibe la nueva contraseña, la encripta
+  // utilizando bcrypt y actualiza la contraseña del usuario en la base de datos.
+  app.post('/api/auth/cambiar-clave', async (req, res) => {
+    const {
+      email,
+      codigo,
+      code,
+      nuevaContrasena,
+      newPassword,
+      confirmarContrasena,
+      confirmPassword,
+      nuevaClave
+    } = req.body;
+
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const inputCode = String(codigo || code || '').trim();
+    const pass = String(nuevaContrasena || newPassword || nuevaClave || '').trim();
+    const confirm = String(confirmarContrasena || confirmPassword || pass).trim();
+
+    if (!cleanEmail) {
+      return res.status(400).json({ error: 'El correo electrónico es requerido.' });
+    }
+    if (!inputCode) {
+      return res.status(400).json({ error: 'El código de verificación es requerido.' });
+    }
+    if (!pass) {
+      return res.status(400).json({ error: 'Debe ingresar la nueva contraseña.' });
+    }
+    if (pass !== confirm) {
+      return res.status(400).json({ error: 'Las contraseñas no coinciden. Verifique ambos campos.' });
+    }
+    if (pass.length < 4 || pass.length > 20) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 20 caracteres.' });
+    }
+
+    const user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    if (!user) {
+      return res.status(404).json({ error: 'El correo electrónico no está registrado' });
+    }
+
+    if (!user.resetPasswordOtp || !user.resetPasswordExpires) {
+      return res.status(400).json({
+        error: 'La sesión de verificación ha vencido o el código ya fue utilizado. Solicite un nuevo código.'
+      });
+    }
+
+    // Verificar expiración de 10 minutos
+    if (Date.now() > user.resetPasswordExpires) {
+      return res.status(400).json({ error: 'El código de verificación ha expirado' });
+    }
+
+    // Verificar coincidencia de código
+    if (user.resetPasswordOtp !== inputCode) {
+      return res.status(400).json({ error: 'El código ingresado es incorrecto' });
+    }
+
+    // Encriptar la nueva contraseña utilizando bcrypt
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(pass, salt);
+
+    // Actualizar la contraseña del usuario en la base de datos
+    user.password = hashedPassword;
+
+    // Invalidar código y expiración
+    user.resetPasswordOtp = undefined;
+    user.resetPasswordExpires = undefined;
+    user.resetPasswordToken = undefined;
+
+    // Notificación de seguridad al correo
+    try {
+      await sendPasswordChangedEmail({
+        toEmail: user.email,
+        recipientName: user.name,
+        recipientUsername: user.username
+      });
+    } catch (e) {
+      console.warn('Aviso: no se pudo enviar correo de confirmación final:', e);
+    }
+
+    const { password: _, ...safeUser } = user;
+    res.json({
+      success: true,
+      message: '¡Contraseña actualizada exitosamente! Se ha encriptado de forma segura con bcrypt.',
+      user: safeUser
+    });
+  });
+
+  // =========================================================================
+  // 1. ENDPOINT: FORGOT PASSWORD (OLVIDÉ MI CONTRASEÑA) - COMPATIBILIDAD
   // =========================================================================
   app.post('/api/auth/forgot-password', async (req, res) => {
     const { email } = req.body;
@@ -857,6 +1048,41 @@ async function startServer() {
 
     const { password, ...safeUser } = user;
     res.json({ success: true, user: safeUser });
+  });
+
+  // Delete User: Restricted exclusively to administrative personnel (ADMINISTRATIVO or SUPERIOR)
+  app.delete('/api/users/:userId', (req, res) => {
+    const { userId } = req.params;
+    const requesterRole = (req.headers['x-user-role'] as string) || req.body?.requesterRole;
+    const requesterId = (req.headers['x-user-id'] as string) || req.body?.requesterId;
+
+    // Solo para administrativos o superiores
+    if (requesterRole !== 'ADMINISTRATIVO' && requesterRole !== 'SUPERIOR') {
+      return res.status(403).json({
+        error: 'Acceso denegado: La función de eliminar usuarios está reservada exclusivamente para personal administrativo.'
+      });
+    }
+
+    // No permitir eliminarse a uno mismo
+    if (requesterId && requesterId === userId) {
+      return res.status(400).json({
+        error: 'Operación no permitida: No puede eliminar su propia cuenta administrativa institucional.'
+      });
+    }
+
+    const index = users.findIndex(u => u.id === userId);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Usuario no encontrado en los registros institucionales.' });
+    }
+
+    const deletedUser = users.splice(index, 1)[0];
+    console.log(`🗑️ [USER DELETED] Usuario ${deletedUser.name} (${deletedUser.username} / ${deletedUser.email}) eliminado por ${requesterId || requesterRole}`);
+
+    res.json({
+      success: true,
+      message: `El usuario ${deletedUser.name} ha sido eliminado exitosamente del sistema.`,
+      deletedId: userId
+    });
   });
 
   // Maintenance: Get all items with optional filters

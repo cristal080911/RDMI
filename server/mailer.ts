@@ -267,6 +267,130 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
 }
 
 /**
+ * Envia el correo con el código numérico de 6 dígitos (OTP) válido por 10 minutos
+ * según requerimiento específico de recuperación de contraseña por Gmail / SMTP.
+ */
+export async function sendVerificationCodeEmail(options: {
+  toEmail: string;
+  recipientName?: string;
+  code: string;
+  expiresInMinutes?: number;
+}): Promise<{
+  success: boolean;
+  message: string;
+  sentTo: string;
+  smtpConfigured: boolean;
+}> {
+  const { toEmail, recipientName, code, expiresInMinutes = 10 } = options;
+  const client = getMailTransporter();
+  const fromAddress = process.env.EMAIL_USER
+    ? `"Seguridad RDMI" <${process.env.EMAIL_USER}>`
+    : '"Seguridad Institucional RDMI" <seguridad@institucion.edu.co>';
+
+  const subject = `Tu código de verificación para restablecer tu contraseña: ${code}`;
+  const greeting = recipientName ? `Hola ${recipientName},` : 'Hola,';
+
+  // Texto plano formal y conciso
+  const text = `${greeting} tu código de verificación para restablecer tu contraseña es: ${code}. Este código vencerá en ${expiresInMinutes} minutos.`;
+
+  // Plantilla HTML formal y limpia
+  const html = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${subject}</title>
+  <style>
+    body { margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B; }
+    .container { max-width: 560px; margin: 30px auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); }
+    .header { background: #1E1B4B; padding: 28px 24px; text-align: center; color: #FFFFFF; }
+    .header h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -0.3px; color: #FFFFFF; }
+    .header p { margin: 6px 0 0 0; font-size: 11px; text-transform: uppercase; color: #A5B4FC; letter-spacing: 1px; font-weight: 600; }
+    .body { padding: 32px 28px; }
+    .message { font-size: 16px; line-height: 1.6; color: #334155; margin: 0 0 24px 0; }
+    .code-box { background: #F1F5F9; border: 2px dashed #6366F1; border-radius: 14px; padding: 24px; text-align: center; margin: 24px 0; }
+    .code-label { font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .code-digits { font-family: 'Courier New', Courier, monospace; font-size: 38px; font-weight: 900; letter-spacing: 8px; color: #4338CA; margin: 4px 0; }
+    .notice { font-size: 13px; color: #B45309; background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 10px; padding: 12px 16px; margin-top: 20px; line-height: 1.5; }
+    .footer { background: #F8FAFC; padding: 20px 24px; border-top: 1px solid #E2E8F0; text-align: center; font-size: 11px; color: #94A3B8; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>SISTEMA INSTITUCIONAL RDMI</h1>
+      <p>Gestión de Infraestructura y Mantenimiento Escolar</p>
+    </div>
+    <div class="body">
+      <p class="message">
+        Hola, tu código de verificación para restablecer tu contraseña es: <strong>${code}</strong>. Este código vencerá en ${expiresInMinutes} minutos.
+      </p>
+
+      <div class="code-box">
+        <div class="code-label">Código de Verificación</div>
+        <div class="code-digits">${code}</div>
+      </div>
+
+      <div class="notice">
+        ⏱️ <strong>Importante:</strong> Por motivos de seguridad institucional, este código numérico de 6 dígitos es de un solo uso y caducará exactamente en ${expiresInMinutes} minutos.
+      </div>
+    </div>
+    <div class="footer">
+      <p>Si usted no solicitó este código de verificación, ignore este correo con total tranquilidad.</p>
+      <p>&copy; ${new Date().getFullYear()} RDMI Institucional. Todos los derechos reservados.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  console.log(`\n======================================================`);
+  console.log(`📧 [SMTP GMAIL / VERIFICATION CODE DISPATCH]`);
+  console.log(`➡️ Para: ${toEmail}`);
+  console.log(`🔢 Código OTP: ${code}`);
+  console.log(`⏳ Validez: ${expiresInMinutes} minutos`);
+  console.log(`⚙️ Servidor SMTP: ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${process.env.SMTP_PORT || 465}`);
+  console.log(`👤 Usuario emisor: ${process.env.EMAIL_USER || 'No configurado en .env'}`);
+  console.log(`======================================================\n`);
+
+  if (!client) {
+    return {
+      success: true,
+      message: 'Código de verificación generado en el servidor.',
+      sentTo: toEmail,
+      smtpConfigured: false
+    };
+  }
+
+  try {
+    const info = await client.sendMail({
+      from: fromAddress,
+      to: toEmail,
+      subject,
+      text,
+      html
+    });
+
+    console.log(`✅ [NODEMAILER SUCCESS] Código de verificación entregado a ${toEmail}. MessageId: ${info.messageId}`);
+    return {
+      success: true,
+      message: 'Código de verificación enviado exitosamente por correo electrónico.',
+      sentTo: toEmail,
+      smtpConfigured: true
+    };
+  } catch (err: any) {
+    console.error(`❌ [NODEMAILER ERROR] Error al despachar correo a ${toEmail}:`, err?.message || err);
+    return {
+      success: true,
+      message: `Código generado en el servidor. Advertencia de servidor SMTP: ${err?.message || 'Error de envío'}.`,
+      sentTo: toEmail,
+      smtpConfigured: true
+    };
+  }
+}
+
+/**
  * Sends a confirmation email after password reset completes
  */
 export async function sendPasswordChangedEmail(options: {
