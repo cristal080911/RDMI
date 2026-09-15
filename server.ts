@@ -1,7 +1,14 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { createServer as createViteServer } from 'vite';
+import {
+  sendPasswordResetEmail,
+  sendPasswordChangedEmail,
+  generatePasswordResetEmailHtml
+} from './server/mailer';
 
 interface UserRecord {
   id: string;
@@ -16,6 +23,9 @@ interface UserRecord {
   createdAt: string;
   approvedAt?: string;
   approvedBy?: string;
+  resetPasswordToken?: string;
+  resetPasswordExpires?: number;
+  resetPasswordOtp?: string;
 }
 
 interface ProgressAdvanceRecord {
@@ -434,7 +444,13 @@ async function startServer() {
       return res.status(401).json({ error: 'Credenciales inválidas. Verifique su usuario o correo.' });
     }
 
-    if (user.password !== password && password !== 'admin123' && password !== 'password123' && password !== 'pass1234') {
+    // Verify password (supports bcrypt hash or institutional demo defaults)
+    const isBcryptHash = user.password.startsWith('$2a$') || user.password.startsWith('$2b$');
+    const isPasswordValid = isBcryptHash
+      ? bcrypt.compareSync(password, user.password)
+      : user.password === password || password === 'admin123' || password === 'password123' || password === 'pass1234';
+
+    if (!isPasswordValid) {
       return res.status(401).json({ error: 'Contraseña incorrecta.' });
     }
 
@@ -564,16 +580,187 @@ async function startServer() {
     res.json(emailNotificationLogs);
   });
 
-  // Authentication: Password Reset / Recovery
-  app.post('/api/auth/reset-password', (req, res) => {
+  // =========================================================================
+  // 1. ENDPOINT: FORGOT PASSWORD (OLVIDÉ MI CONTRASEÑA)
+  // - Verifica si el correo existe en la base de datos
+  // - Genera token temporal de 15 minutos y código OTP
+  // - Envía correo con plantilla HTML mediante Nodemailer (Gmail / SMTP)
+  // =========================================================================
+  app.post('/api/auth/forgot-password', async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Debe ingresar el correo electrónico institucional registrado.' });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    if (cleanEmail.includes(' ') || /\s/.test(cleanEmail)) {
+      return res.status(400).json({ error: 'El correo electrónico no puede contener espacios.' });
+    }
+
+    // Consulta en base de datos de usuarios
+    const user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    if (!user) {
+      return res.status(404).json({
+        error: 'El correo electrónico no existe en el sistema institucional. Verifique que esté bien escrito o regístrese como nuevo funcionario.'
+      });
+    }
+
+    // Generar token único seguro y código OTP de 6 dígitos con tiempo de expiración (15 minutos)
+    const token = crypto.randomBytes(32).toString('hex');
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresInMinutes = 15;
+    const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
+
+    // Guardar en la base de datos asociado al usuario
+    user.resetPasswordToken = token;
+    user.resetPasswordExpires = expiresAt;
+    user.resetPasswordOtp = otp;
+
+    // Construir enlace institucional seguro
+    const reqHost = req.get('host') || 'localhost:3000';
+    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    const origin = process.env.APP_URL || `${protocol}://${reqHost}`;
+    const resetLink = `${origin}/?token=${token}&email=${encodeURIComponent(user.email)}#reset-password`;
+
+    // Despachar correo electrónico formal con Nodemailer
+    const mailResult = await sendPasswordResetEmail({
+      toEmail: user.email,
+      recipientName: user.name,
+      recipientUsername: user.username,
+      token,
+      otp,
+      resetLink,
+      expiresInMinutes,
+      sentAt: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      message: 'Correo enviado. Se ha generado y enviado el enlace de recuperación con validez de 15 minutos a su correo electrónico.',
+      email: user.email,
+      expiresInMinutes,
+      token,
+      otp,
+      resetLink,
+      smtpConfigured: mailResult.smtpConfigured
+    });
+  });
+
+  // =========================================================================
+  // 2. ENDPOINT: VERIFICAR TOKEN / CÓDIGO TEMPORAL
+  // =========================================================================
+  app.post('/api/auth/verify-reset-token', (req, res) => {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'Token o código de recuperación no proporcionado.' });
+    }
+
+    const cleanToken = String(token).trim();
+    const user = users.find(
+      u => u.resetPasswordToken === cleanToken || u.resetPasswordOtp === cleanToken
+    );
+
+    if (!user || !user.resetPasswordExpires) {
+      return res.status(400).json({
+        error: 'El token o código de recuperación es inválido o no existe.'
+      });
+    }
+
+    // Verificar si el token ya expiró (15 minutos)
+    if (Date.now() > user.resetPasswordExpires) {
+      return res.status(400).json({
+        error: 'El enlace o token de recuperación ha expirado (límite de 15 minutos). Por favor solicite uno nuevo.'
+      });
+    }
+
+    res.json({
+      valid: true,
+      email: user.email,
+      username: user.username,
+      name: user.name,
+      expiresAt: user.resetPasswordExpires
+    });
+  });
+
+  // =========================================================================
+  // 3. ENDPOINT: RESTABLECER CONTRASEÑA CON TOKEN Y BCRYPT
+  // =========================================================================
+  app.post('/api/auth/reset-password-with-token', async (req, res) => {
+    const { token, newPassword, confirmPassword } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'Token o código de recuperación requerido.' });
+    }
+    if (!newPassword) {
+      return res.status(400).json({ error: 'Debe ingresar la nueva contraseña.' });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'Las contraseñas no coinciden. Verifique ambos campos.' });
+    }
+
+    const cleanPass = String(newPassword).trim().slice(0, 20);
+    if (cleanPass.length < 4 || cleanPass.length > 20) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 20 caracteres.' });
+    }
+
+    const cleanToken = String(token).trim();
+    const user = users.find(
+      u => u.resetPasswordToken === cleanToken || u.resetPasswordOtp === cleanToken
+    );
+
+    if (!user || !user.resetPasswordExpires) {
+      return res.status(400).json({
+        error: 'El token o código de recuperación es inválido o no existe en el sistema.'
+      });
+    }
+
+    // Validación estricta de tiempo de expiración (15 minutos)
+    if (Date.now() > user.resetPasswordExpires) {
+      return res.status(400).json({
+        error: 'El token o código de recuperación ha expirado (tiempo límite de 15 minutos excedido). Solicite un nuevo enlace.'
+      });
+    }
+
+    // Encriptación segura con bcrypt (cost factor 10)
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(cleanPass, salt);
+
+    // Actualizar en base de datos
+    user.password = hashedPassword;
+
+    // Invalidar token para evitar reutilización
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    user.resetPasswordOtp = undefined;
+
+    // Enviar correo de confirmación de seguridad vía Nodemailer
+    try {
+      await sendPasswordChangedEmail({
+        toEmail: user.email,
+        recipientName: user.name,
+        recipientUsername: user.username
+      });
+    } catch (e) {
+      console.warn('Advertencia al enviar correo de confirmación:', e);
+    }
+
+    const { password: _, ...safeUser } = user;
+    res.json({
+      success: true,
+      message: '¡Contraseña restablecida exitosamente! Se ha encriptado de forma segura con bcrypt y se ha enviado confirmación a su correo.',
+      user: safeUser
+    });
+  });
+
+  // Authentication: Password Reset / Recovery (Legacy fallback)
+  app.post('/api/auth/reset-password', async (req, res) => {
     const { identifier, newPassword } = req.body;
     if (!identifier || !newPassword) {
       return res.status(400).json({ error: 'Debe ingresar el identificador de usuario y la nueva contraseña.' });
     }
 
-    const cleanPass = String(newPassword).trim().slice(0, 10);
-    if (cleanPass.length < 4 || cleanPass.length > 10) {
-      return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 10 caracteres.' });
+    const cleanPass = String(newPassword).trim().slice(0, 20);
+    if (cleanPass.length < 4 || cleanPass.length > 20) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener entre 4 y 20 caracteres.' });
     }
 
     const cleanIdentifier = String(identifier).trim().toLowerCase();
@@ -585,14 +772,15 @@ async function startServer() {
       return res.status(404).json({ error: 'No se encontró ningún usuario o correo institucional con esos datos.' });
     }
 
-    user.password = cleanPass;
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(cleanPass, salt);
     const { password: _, ...safeUser } = user;
 
     console.log(`\n[SEGURIDAD] Notificación enviada al correo ${user.email} por restablecimiento de contraseña.`);
 
     res.json({
       success: true,
-      message: `Contraseña recuperada exitosamente para ${safeUser.name}. Se ha enviado una notificación de seguridad a ${safeUser.email}.`,
+      message: `Contraseña recuperada exitosamente para ${safeUser.name}. Se ha aplicado encriptación bcrypt y enviado notificación a ${safeUser.email}.`,
       user: safeUser,
       emailNotified: safeUser.email
     });

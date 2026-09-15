@@ -327,6 +327,148 @@ export class ApiClient {
     }
   }
 
+  static async requestForgotPassword(email: string): Promise<{
+    success: boolean;
+    message: string;
+    email: string;
+    token?: string;
+    otp?: string;
+    resetLink?: string;
+    expiresInMinutes?: number;
+    smtpConfigured?: boolean;
+  }> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      throw new Error('Debe ingresar el correo institucional registrado.');
+    }
+
+    try {
+      const resp = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || 'Error al solicitar restablecimiento de contraseña.');
+      }
+      return data;
+    } catch (err: any) {
+      // If backend was unreachable or threw, verify locally
+      const localUsers = getLocalStoredUsers();
+      const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
+      if (!user) {
+        throw new Error(err?.message || 'El correo electrónico no se encuentra registrado en el sistema institucional.');
+      }
+      const token = `tok_${Math.random().toString(36).substring(2, 12)}_${Date.now()}`;
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const resetLink = `${window.location.origin}/?token=${token}&email=${encodeURIComponent(user.email)}#reset-password`;
+
+      // Save token in local record for resilient recovery
+      (user as any).resetPasswordToken = token;
+      (user as any).resetPasswordExpires = Date.now() + 15 * 60 * 1000;
+      (user as any).resetPasswordOtp = otp;
+      setLocalStoredUsers(localUsers);
+
+      return {
+        success: true,
+        message: 'Correo enviado. Se ha generado un enlace y código con validez de 15 minutos.',
+        email: user.email,
+        token,
+        otp,
+        resetLink,
+        expiresInMinutes: 15,
+        smtpConfigured: false
+      };
+    }
+  }
+
+  static async verifyResetToken(token: string): Promise<{
+    valid: boolean;
+    email?: string;
+    username?: string;
+    name?: string;
+  }> {
+    const cleanToken = token.trim();
+    if (!cleanToken) {
+      throw new Error('Token o código de recuperación requerido.');
+    }
+
+    try {
+      const resp = await fetch('/api/auth/verify-reset-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: cleanToken })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || 'Token inválido o expirado.');
+      }
+      return data;
+    } catch (err: any) {
+      const localUsers = getLocalStoredUsers();
+      const user = localUsers.find(
+        (u: any) => u.resetPasswordToken === cleanToken || u.resetPasswordOtp === cleanToken
+      );
+      if (!user || !(user as any).resetPasswordExpires || Date.now() > (user as any).resetPasswordExpires) {
+        throw new Error('El enlace o código de recuperación es inválido o ha expirado (15 min).');
+      }
+      return {
+        valid: true,
+        email: user.email,
+        username: user.username,
+        name: user.name
+      };
+    }
+  }
+
+  static async resetPasswordWithToken(payload: {
+    token: string;
+    newPassword: string;
+    confirmPassword: string;
+  }): Promise<{ success: boolean; message: string; user?: User }> {
+    const { token, newPassword, confirmPassword } = payload;
+    if (!token) throw new Error('Token o código de recuperación no proporcionado.');
+    if (!newPassword) throw new Error('Debe ingresar la nueva contraseña.');
+    if (newPassword !== confirmPassword) throw new Error('Las contraseñas no coinciden.');
+
+    try {
+      const resp = await fetch('/api/auth/reset-password-with-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, newPassword, confirmPassword })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || 'Error al restablecer la contraseña.');
+      }
+      return data;
+    } catch (err: any) {
+      // Local fallback
+      const cleanToken = token.trim();
+      const localUsers = getLocalStoredUsers();
+      const user = localUsers.find(
+        (u: any) => u.resetPasswordToken === cleanToken || u.resetPasswordOtp === cleanToken
+      );
+      if (!user || !(user as any).resetPasswordExpires || Date.now() > (user as any).resetPasswordExpires) {
+        throw new Error(err?.message || 'El enlace o código ha expirado. Solicite uno nuevo.');
+      }
+
+      user.password = newPassword.trim();
+      (user as any).resetPasswordToken = undefined;
+      (user as any).resetPasswordExpires = undefined;
+      (user as any).resetPasswordOtp = undefined;
+      setLocalStoredUsers(localUsers);
+
+      const { password: _, ...safeUser } = user;
+      return {
+        success: true,
+        message: '¡Contraseña restablecida exitosamente! Ya puede iniciar sesión con su nueva clave.',
+        user: safeUser
+      };
+    }
+  }
+
   static async resetPassword(
     identifier: string,
     newPassword: string

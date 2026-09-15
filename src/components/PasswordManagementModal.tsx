@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Lock,
@@ -9,26 +9,24 @@ import {
   CheckCircle2,
   AlertCircle,
   Mail,
-  User,
   ArrowRight,
   RefreshCw,
-  Sparkles,
   Send,
   ExternalLink,
   ShieldAlert,
-  Inbox,
-  FileCheck2,
   Clock,
-  Laptop
+  Sparkles,
+  Inbox
 } from 'lucide-react';
 import { User as UserEntity, SecurityEmailNotification } from '../core/domain/entities';
 import { ApiClient } from '../adapters/api/apiClient';
-import { EmailNotificationService } from '../services/emailNotificationService';
 
 interface PasswordManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
-  mode: 'RECOVER' | 'CHANGE';
+  mode?: 'FORGOT' | 'RESET' | 'CHANGE' | 'RECOVER';
+  initialToken?: string;
+  initialEmail?: string;
   currentUser?: UserEntity | null;
   onPasswordChangedSuccessfully?: (newPassword?: string) => void;
 }
@@ -36,791 +34,870 @@ interface PasswordManagementModalProps {
 export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = ({
   isOpen,
   onClose,
-  mode,
+  mode = 'FORGOT',
+  initialToken = '',
+  initialEmail = '',
   currentUser,
   onPasswordChangedSuccessfully
 }) => {
-  const [activeTab, setActiveTab] = useState<'RECOVER' | 'CHANGE'>(mode);
+  // Active sub-screen: 'FORGOT' (Pantalla 1: Solicitar enlace) or 'RESET' (Pantalla 2: Restablecer con token) or 'CHANGE'
+  const getInitialTab = (): 'FORGOT' | 'RESET' | 'CHANGE' => {
+    if (initialToken) return 'RESET';
+    if (mode === 'CHANGE') return 'CHANGE';
+    if (mode === 'RESET') return 'RESET';
+    return 'FORGOT';
+  };
 
-  // Recover State
-  const [recoverIdentifier, setRecoverIdentifier] = useState('');
-  const [recoverNewPassword, setRecoverNewPassword] = useState('');
-  const [recoverConfirmPassword, setRecoverConfirmPassword] = useState('');
-  const [showRecoverPass, setShowRecoverPass] = useState(false);
-  const [showRecoverConfirmPass, setShowRecoverConfirmPass] = useState(false);
+  const [activeTab, setActiveTab] = useState<'FORGOT' | 'RESET' | 'CHANGE'>(getInitialTab);
 
-  // 2-Step OTP Code Flow (Optional enhancement for user convenience)
-  const [requireCodeFlow, setRequireCodeFlow] = useState(false);
-  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
-  const [enteredCode, setEnteredCode] = useState('');
-  const [codeSentToEmail, setCodeSentToEmail] = useState<string | null>(null);
+  // --- PANTALLA 1: RECUPERAR CONTRASEÑA (EMAIL + ENVIAR ENLACE) ---
+  const [emailInput, setEmailInput] = useState(initialEmail || '');
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailSentSuccess, setEmailSentSuccess] = useState<string | null>(null);
+  const [dispatchedTokenData, setDispatchedTokenData] = useState<{
+    token?: string;
+    otp?: string;
+    resetLink?: string;
+    email?: string;
+    expiresInMinutes?: number;
+    smtpConfigured?: boolean;
+  } | null>(null);
 
-  // Change State (Logged-in user)
-  const [currentPassword, setCurrentPassword] = useState('');
+  // --- PANTALLA 2: RESTABLECER CONTRASEÑA (TOKEN + NUEVA Y CONFIRMAR CONTRASEÑA) ---
+  const [tokenInput, setTokenInput] = useState(initialToken || '');
   const [newPassword, setNewPassword] = useState('');
-  const [confirmNewPassword, setConfirmNewPassword] = useState('');
-  const [showCurrentPass, setShowCurrentPass] = useState(false);
-  const [showNewPass, setShowNewPass] = useState(false);
-  const [showConfirmNewPass, setShowConfirmNewPass] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
 
-  // Status & Feedback
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSendingCode, setIsSendingCode] = useState(false);
+  // --- TAB 3: CAMBIAR CONTRASEÑA (USUARIO AUTENTICADO) ---
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+
+  // Feedback & Preview
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [lastDispatchedEmail, setLastDispatchedEmail] = useState<SecurityEmailNotification | null>(null);
-
-  // Email Preview Modal / Drawer
   const [showEmailPreviewModal, setShowEmailPreviewModal] = useState(false);
 
-  // Reset internal states on open
-  React.useEffect(() => {
+  // Synchronize when modal opens or props change
+  useEffect(() => {
     if (isOpen) {
-      setActiveTab(mode);
       setError(null);
-      setSuccessMessage(null);
-      setRecoverIdentifier('');
-      setRecoverNewPassword('');
-      setRecoverConfirmPassword('');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmNewPassword('');
-      setRequireCodeFlow(false);
-      setGeneratedCode(null);
-      setEnteredCode('');
-      setCodeSentToEmail(null);
-      setLastDispatchedEmail(null);
-      setShowEmailPreviewModal(false);
+      setEmailSentSuccess(null);
+      setResetSuccessMessage(null);
+      setIsSendingEmail(false);
+      setIsResetting(false);
+
+      if (initialToken) {
+        setTokenInput(initialToken);
+        setActiveTab('RESET');
+      } else if (mode === 'CHANGE' && currentUser) {
+        setActiveTab('CHANGE');
+      } else if (mode === 'RESET') {
+        setActiveTab('RESET');
+      } else {
+        setActiveTab('FORGOT');
+      }
+
+      if (initialEmail) {
+        setEmailInput(initialEmail);
+      }
     }
-  }, [isOpen, mode]);
+  }, [isOpen, mode, initialToken, initialEmail, currentUser]);
 
   if (!isOpen) return null;
 
-  const handleSendVerificationCode = async () => {
+  // =========================================================================
+  // HANDLER: PANTALLA 1 - ENVIAR ENLACE DE RECUPERACIÓN
+  // =========================================================================
+  const handleSendRecoveryLink = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setError(null);
-    const cleanIdent = recoverIdentifier.trim();
-    if (!cleanIdent) {
-      setError('Por favor ingrese su usuario o correo institucional antes de solicitar el código.');
-      return;
-    }
-    if (recoverIdentifier.includes(' ') || /\s/.test(recoverIdentifier)) {
-      setError('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
+    setEmailSentSuccess(null);
+
+    const cleanEmail = emailInput.trim().toLowerCase();
+    if (!cleanEmail) {
+      setError('Por favor ingrese su correo electrónico institucional registrado.');
       return;
     }
 
-    setIsSendingCode(true);
+    if (cleanEmail.includes(' ') || /\s/.test(cleanEmail)) {
+      setError('El correo electrónico no debe contener espacios.');
+      return;
+    }
+
+    // Basic email format check
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setError('Por favor ingrese un formato de correo electrónico válido (ej. usuario@institucion.edu.co).');
+      return;
+    }
+
+    setIsSendingEmail(true);
+
     try {
-      // Find user
-      const users = await ApiClient.getAllUsers();
-      const user = users.find(
-        u => u.username.toLowerCase() === cleanIdent.toLowerCase() || u.email.toLowerCase() === cleanIdent.toLowerCase()
-      );
+      const response = await ApiClient.requestForgotPassword(cleanEmail);
 
-      if (!user) {
-        throw new Error('No se encontró ningún usuario o correo institucional con esos datos.');
-      }
-
-      // Generate a 6-digit code
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      setGeneratedCode(code);
-      setCodeSentToEmail(user.email);
-
-      // Dispatch security email
-      const notif = await ApiClient.sendSecurityEmailNotification({
-        type: 'RECOVERY_CODE',
-        toEmail: user.email,
-        recipientName: user.name,
-        recipientUsername: user.username,
-        roleTitle: user.roleTitle,
-        securityCode: code
+      setDispatchedTokenData({
+        token: response.token,
+        otp: response.otp,
+        resetLink: response.resetLink,
+        email: cleanEmail,
+        expiresInMinutes: response.expiresInMinutes || 15,
+        smtpConfigured: response.smtpConfigured
       });
 
-      setLastDispatchedEmail(notif);
-      setRequireCodeFlow(true);
-      setError(null);
+      setEmailSentSuccess(
+        response.message ||
+        'Correo enviado con éxito. Se ha generado y enviado el enlace de recuperación con validez de 15 minutos.'
+      );
+
+      // Pre-fill token input in Pantalla 2
+      if (response.token) {
+        setTokenInput(response.token);
+      } else if (response.otp) {
+        setTokenInput(response.otp);
+      }
     } catch (err: any) {
-      setError(err.message || 'Error al generar código de seguridad.');
+      setError(err?.message || 'Error al procesar la solicitud. Verifique que el correo esté registrado.');
     } finally {
-      setIsSendingCode(false);
+      setIsSendingEmail(false);
     }
   };
 
-  const handleRecoverSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // =========================================================================
+  // HANDLER: PANTALLA 2 - RESTABLECER CONTRASEÑA CON TOKEN (BCRYPT)
+  // =========================================================================
+  const handleResetPasswordWithToken = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setError(null);
-    setSuccessMessage(null);
+    setResetSuccessMessage(null);
 
-    const cleanIdent = recoverIdentifier.trim();
-    if (!cleanIdent) {
-      setError('Por favor ingrese su usuario institucional o correo electrónico.');
-      return;
-    }
-    if (recoverIdentifier.includes(' ') || /\s/.test(recoverIdentifier)) {
-      setError('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
+    const cleanToken = tokenInput.trim();
+    if (!cleanToken) {
+      setError('Debe ingresar o capturar el token / código de recuperación recibido en su correo.');
       return;
     }
 
-    if (requireCodeFlow && generatedCode) {
-      if (enteredCode.trim() !== generatedCode.trim()) {
-        setError('El código de verificación ingresado no es correcto.');
-        return;
-      }
-    }
-
-    if (recoverNewPassword.length < 4) {
-      setError('La nueva contraseña debe contener al menos 4 caracteres.');
-      return;
-    }
-
-    if (recoverNewPassword.length > 10) {
-      setError('La nueva contraseña no puede exceder el límite máximo de 10 dígitos.');
-      return;
-    }
-
-    if (recoverNewPassword !== recoverConfirmPassword) {
-      setError('Las contraseñas ingresadas no coinciden. Verifíquelas.');
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const res = await ApiClient.resetPassword(cleanIdent, recoverNewPassword);
-      setSuccessMessage(res.message || 'Contraseña recuperada exitosamente.');
-      
-      // Fetch latest email notification for preview
-      const notifs = await ApiClient.getRecentEmailNotifications();
-      if (notifs && notifs.length > 0) {
-        setLastDispatchedEmail(notifs[0]);
-      }
-
-      if (onPasswordChangedSuccessfully) {
-        onPasswordChangedSuccessfully(recoverNewPassword);
-      }
-    } catch (err: any) {
-      setError(err.message || 'No fue posible recuperar la contraseña. Verifique los datos.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleLoggedChangeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccessMessage(null);
-
-    if (!currentUser?.id) {
-      setError('No hay una sesión activa para modificar la contraseña.');
-      return;
-    }
-
-    if (!currentPassword) {
-      setError('Debe ingresar su contraseña actual.');
+    if (!newPassword) {
+      setError('Debe ingresar la nueva contraseña.');
       return;
     }
 
     if (newPassword.length < 4) {
-      setError('La nueva contraseña debe contener al menos 4 caracteres.');
+      setError('La nueva contraseña debe tener mínimo 4 caracteres.');
       return;
     }
 
-    if (newPassword.length > 10) {
-      setError('La nueva contraseña no puede exceder el límite máximo de 10 dígitos.');
+    if (newPassword.length > 20) {
+      setError('La nueva contraseña no puede superar los 20 caracteres.');
       return;
     }
 
-    if (newPassword !== confirmNewPassword) {
-      setError('La confirmación de la nueva contraseña no coincide.');
+    if (newPassword !== confirmPassword) {
+      setError('Las contraseñas no coinciden. Por favor asegúrese de que ambas sean exactamente iguales.');
       return;
     }
 
-    if (newPassword === currentPassword) {
-      setError('La nueva contraseña debe ser diferente a la actual.');
-      return;
-    }
+    setIsResetting(true);
 
-    setIsLoading(true);
     try {
-      const res = await ApiClient.changePassword(currentUser.id, currentPassword, newPassword);
-      setSuccessMessage(res.message || 'Contraseña actualizada exitosamente.');
+      const response = await ApiClient.resetPasswordWithToken({
+        token: cleanToken,
+        newPassword,
+        confirmPassword
+      });
 
-      // Fetch latest email notification for preview
-      const notifs = await ApiClient.getRecentEmailNotifications();
-      if (notifs && notifs.length > 0) {
-        setLastDispatchedEmail(notifs[0]);
-      }
+      setResetSuccessMessage(
+        response.message || '¡Contraseña restablecida exitosamente! Ya puede iniciar sesión con su nueva clave.'
+      );
 
       if (onPasswordChangedSuccessfully) {
         onPasswordChangedSuccessfully(newPassword);
       }
     } catch (err: any) {
-      setError(err.message || 'Error al cambiar la contraseña.');
+      setError(err?.message || 'Error al restablecer la contraseña. El token puede ser inválido o haber expirado.');
     } finally {
-      setIsLoading(false);
+      setIsResetting(false);
+    }
+  };
+
+  // =========================================================================
+  // HANDLER: CAMBIO DE CONTRASEÑA DESDE SESIÓN ACTIVA
+  // =========================================================================
+  const handleChangeActivePassword = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setError(null);
+    setResetSuccessMessage(null);
+
+    if (!currentUser) {
+      setError('Debe tener una sesión iniciada para cambiar la contraseña actual.');
+      return;
+    }
+
+    if (!currentPassword) {
+      setError('Ingrese su contraseña actual.');
+      return;
+    }
+
+    if (!newPassword) {
+      setError('Ingrese la nueva contraseña.');
+      return;
+    }
+
+    if (newPassword.length < 4 || newPassword.length > 20) {
+      setError('La nueva contraseña debe tener entre 4 y 20 caracteres.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError('Las contraseñas no coinciden.');
+      return;
+    }
+
+    setIsResetting(true);
+    try {
+      const resp = await ApiClient.changePassword(currentUser.id, currentPassword, newPassword);
+      setResetSuccessMessage(resp.message || 'Contraseña actualizada exitosamente.');
+      if (onPasswordChangedSuccessfully) {
+        onPasswordChangedSuccessfully(newPassword);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Error al cambiar la contraseña.');
+    } finally {
+      setIsResetting(false);
     }
   };
 
   return (
-    <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
-        <div className="bg-[#FDFBF7] rounded-3xl border border-[#E5DEC9] shadow-2xl max-w-xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto">
-          
-          {/* Header */}
-          <div className="p-5 sm:p-6 bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-950 text-white flex items-center justify-between border-b border-indigo-900/60">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-purple-600/30 flex items-center justify-center border border-purple-400/30 text-purple-300 shrink-0">
-                <KeyRound className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider bg-purple-800 text-purple-200 px-2 py-0.5 rounded border border-purple-600">
-                    Seguridad Institucional
-                  </span>
-                  <span className="text-[10px] font-semibold text-purple-300">
-                    Máx. 10 dígitos
-                  </span>
-                </div>
-                <h3 className="text-base sm:text-lg font-black text-white mt-0.5">
-                  {activeTab === 'RECOVER' ? 'Recuperación de Contraseña con Notificación' : 'Cambio Seguro de Contraseña'}
-                </h3>
-              </div>
+    <div
+      id="password-management-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto"
+    >
+      <div className="bg-[#FDFBF7] rounded-3xl border border-[#E5DEC9] shadow-2xl max-w-lg w-full overflow-hidden text-slate-800 my-auto animate-in zoom-in-95 duration-200">
+        
+        {/* Modal Header */}
+        <div className="p-5 bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-950 text-white relative border-b border-indigo-900/60">
+          <button
+            onClick={onClose}
+            aria-label="Cerrar ventana"
+            className="absolute top-4 right-4 p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-600 to-emerald-500 flex items-center justify-center shadow-lg shadow-purple-950/50 ring-2 ring-purple-300/40 shrink-0">
+              <ShieldCheck className="w-6 h-6 text-white" />
             </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-wider mb-1 border border-emerald-400/30">
+                <Lock className="w-3 h-3 text-emerald-300" />
+                Seguridad Institucional • Encriptación Bcrypt
+              </div>
+              <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                {activeTab === 'FORGOT' && 'Recuperar Contraseña'}
+                {activeTab === 'RESET' && 'Restablecer Contraseña'}
+                {activeTab === 'CHANGE' && 'Cambio de Clave Personal'}
+              </h3>
+            </div>
+          </div>
+
+          {/* Sub-Navigation Tabs */}
+          <div className="flex items-center gap-2 mt-4 pt-3 border-t border-indigo-900/60">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('FORGOT');
+                setError(null);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'FORGOT'
+                  ? 'bg-purple-700 text-white shadow-md shadow-purple-900/40 ring-1 ring-purple-400/50'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'
+              }`}
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>1. Enviar Enlace</span>
+            </button>
 
             <button
-              onClick={onClose}
-              className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-              title="Cerrar ventana"
+              type="button"
+              onClick={() => {
+                setActiveTab('RESET');
+                setError(null);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'RESET'
+                  ? 'bg-purple-700 text-white shadow-md shadow-purple-900/40 ring-1 ring-purple-400/50'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'
+              }`}
             >
-              <X className="w-5 h-5" />
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>2. Restablecer con Token</span>
             </button>
-          </div>
 
-          {/* Email Notification Information Banner */}
-          <div className="px-5 py-2.5 bg-gradient-to-r from-amber-500/10 via-purple-500/10 to-indigo-500/10 border-b border-[#E7DEC9] flex items-center gap-2 text-[11px] text-slate-700">
-            <Mail className="w-4 h-4 text-purple-800 shrink-0" />
-            <span>
-              <strong>Notificación Electrónica Obligatoria:</strong> Cada restablecimiento o cambio de clave envía un comprobante formal a la cuenta de correo registrada.
-            </span>
-          </div>
-
-          {/* Tab Switcher if user is logged in */}
-          {currentUser && (
-            <div className="p-2 bg-[#F2ECE0] border-b border-[#E3DCBD] flex gap-1">
+            {currentUser && (
               <button
+                type="button"
                 onClick={() => {
                   setActiveTab('CHANGE');
                   setError(null);
-                  setSuccessMessage(null);
-                  setRequireCodeFlow(false);
                 }}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                   activeTab === 'CHANGE'
-                    ? 'bg-purple-900 text-white shadow-sm'
-                    : 'text-slate-700 hover:text-slate-900'
+                    ? 'bg-purple-700 text-white shadow-md shadow-purple-900/40 ring-1 ring-purple-400/50'
+                    : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'
                 }`}
               >
                 <Lock className="w-3.5 h-3.5" />
-                <span>Cambiar Mi Clave</span>
+                <span>Cambio Activo</span>
               </button>
-              <button
-                onClick={() => {
-                  setActiveTab('RECOVER');
-                  setError(null);
-                  setSuccessMessage(null);
-                  setRequireCodeFlow(false);
-                }}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                  activeTab === 'RECOVER'
-                    ? 'bg-purple-900 text-white shadow-sm'
-                    : 'text-slate-700 hover:text-slate-900'
-                }`}
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Recuperar por Correo/Usuario</span>
-              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Modal Body */}
+        <div className="p-6 space-y-5">
+          
+          {/* Global Error Banner */}
+          {error && (
+            <div className="p-4 rounded-2xl bg-red-50 border border-red-200 text-red-800 text-xs sm:text-sm font-semibold flex items-start gap-3 animate-in fade-in">
+              <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold text-red-950">Atención:</p>
+                <p className="leading-relaxed">{error}</p>
+              </div>
             </div>
           )}
 
-          <div className="p-5 sm:p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-            
-            {/* Error message */}
-            {error && (
-              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-2.5 animate-in fade-in">
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold">Error en la validación:</p>
-                  <p className="text-rose-800 mt-0.5">{error}</p>
-                </div>
+          {/* ========================================================================= */}
+          {/* PANTALLA 1: FORMULARIO "RECUPERAR CONTRASEÑA" (CORREO + ENVIAR ENLACE)     */}
+          {/* ========================================================================= */}
+          {activeTab === 'FORGOT' && (
+            <div className="space-y-4 animate-in fade-in">
+              <div className="p-3.5 rounded-2xl bg-purple-50/80 border border-purple-200/80 text-purple-950 text-xs leading-relaxed">
+                <p className="font-bold mb-1 flex items-center gap-1.5 text-purple-900">
+                  <Clock className="w-3.5 h-3.5 text-purple-700" />
+                  Proceso de Recuperación Seguro:
+                </p>
+                Ingrese el correo electrónico institucional asociado a su cuenta. El sistema consultará la base de datos y le enviará un enlace temporal con un token único de <strong>15 minutos de validez</strong> a través del servicio SMTP/Gmail.
               </div>
-            )}
 
-            {/* Success message with Email Notification Card */}
-            {successMessage && (
-              <div className="p-4 sm:p-5 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs space-y-3.5 animate-in fade-in">
-                <div className="flex items-start gap-2.5">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-black text-sm text-emerald-950">¡Operación Completada y Notificada!</p>
-                    <p className="text-emerald-900 mt-0.5">{successMessage}</p>
-                  </div>
-                </div>
-
-                {/* Email Dispatch Confirmation Card */}
-                <div className="p-3.5 rounded-xl bg-white/90 border border-emerald-200 text-slate-800 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 font-bold text-emerald-900 text-xs">
-                      <Mail className="w-4 h-4 text-emerald-700" />
-                      Comprobante de Notificación por Correo
-                    </span>
-                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full font-bold text-[10px] border border-emerald-300 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-                      Despachado
-                    </span>
+              {/* Mensaje de éxito si ya se envió el correo */}
+              {emailSentSuccess && (
+                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-950 space-y-3 animate-in zoom-in-95">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-black text-sm text-emerald-900">¡Correo Enviado con Éxito!</h4>
+                      <p className="text-xs text-emerald-800 mt-0.5 leading-relaxed">
+                        {emailSentSuccess}
+                      </p>
+                    </div>
                   </div>
 
-                  <p className="text-[11px] text-slate-600 leading-relaxed">
-                    Se ha generado y enviado el aviso de seguridad con sello de tiempo, código de encriptación institucional e instrucciones de protección.
-                  </p>
+                  {dispatchedTokenData && (
+                    <div className="p-3 rounded-xl bg-white border border-emerald-200 space-y-2 text-xs">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>📧 Correo destinatario:</span>
+                        <strong className="text-slate-900">{dispatchedTokenData.email}</strong>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>⏱️ Tiempo de expiración:</span>
+                        <strong className="text-amber-700 font-bold">{dispatchedTokenData.expiresInMinutes} minutos</strong>
+                      </div>
+                      {dispatchedTokenData.otp && (
+                        <div className="flex items-center justify-between p-2 rounded-lg bg-indigo-50 border border-indigo-200">
+                          <span className="font-bold text-indigo-900">Código OTP recibido:</span>
+                          <span className="font-mono text-base font-black text-indigo-700 tracking-widest">
+                            {dispatchedTokenData.otp}
+                          </span>
+                        </div>
+                      )}
 
-                  <div className="pt-1 flex flex-wrap gap-2 items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setShowEmailPreviewModal(true)}
-                      className="px-3 py-1.5 rounded-xl bg-purple-900 hover:bg-purple-800 text-white font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Inbox className="w-3.5 h-3.5" />
-                      <span>Ver Vista Previa del Correo Enviado</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="px-4 py-1.5 rounded-xl bg-emerald-800 hover:bg-emerald-700 text-white font-bold text-xs shadow transition-colors cursor-pointer"
-                    >
-                      Cerrar y Continuar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* FORM: RECOVER PASSWORD */}
-            {activeTab === 'RECOVER' && !successMessage && (
-              <form onSubmit={handleRecoverSubmit} className="space-y-4">
-                <div className="p-3.5 rounded-2xl bg-purple-50/80 border border-purple-200 text-xs text-purple-950 leading-relaxed space-y-2">
-                  <div className="flex items-center gap-1.5 font-bold text-purple-900">
-                    <ShieldCheck className="w-4 h-4 text-purple-700" />
-                    <span>Protocolo de Recuperación & Notificación Oficial</span>
-                  </div>
-                  <p>
-                    Ingrese su usuario o correo registrado. Podrá establecer su nueva clave institucional (máx. 10 caracteres) y se enviará la confirmación electrónica formal a su buzón.
-                  </p>
-                </div>
-
-                {/* Identifier Input */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
-                      Usuario o Correo Institucional *
-                    </label>
-                    {recoverIdentifier.includes(' ') && (
-                      <span className="text-[10px] text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                        ⚠️ Sin espacios
-                      </span>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <User className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      required
-                      value={recoverIdentifier}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setRecoverIdentifier(val);
-                        if (val.includes(' ')) {
-                          setError('El nombre de usuario o correo no puede contener espacios. No se pueden usar usuarios con espacios.');
-                        } else if (error && error.includes('espacio')) {
-                          setError(null);
-                        }
-                      }}
-                      placeholder="ej: rectoria o profesor@institucion.edu.co"
-                      className={`w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white border text-xs sm:text-sm text-slate-900 focus:ring-2 focus:outline-none shadow-sm ${
-                        recoverIdentifier.includes(' ')
-                          ? 'border-rose-400 focus:ring-rose-500 bg-rose-50/40 text-rose-900'
-                          : 'border-[#DDD5C2] focus:ring-purple-700'
-                      }`}
-                    />
-                  </div>
-                  {recoverIdentifier.includes(' ') && (
-                    <p className="mt-1 text-[11px] font-bold text-rose-700 flex items-center gap-1">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                      <span>Error: El nombre de usuario o correo no puede tener espacios. Elimine los espacios en blanco.</span>
-                    </p>
-                  )}
-                </div>
-
-                {/* Optional Verification Code Step */}
-                <div className="p-3 rounded-2xl bg-[#F6F2E9] border border-[#E2DAC8] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
-                      <Mail className="w-3.5 h-3.5 text-purple-800" />
-                      Validación de Código Electrónico
-                    </span>
-                    {!requireCodeFlow ? (
-                      <button
-                        type="button"
-                        onClick={handleSendVerificationCode}
-                        disabled={isSendingCode || !recoverIdentifier.trim()}
-                        className="px-2.5 py-1 rounded-lg bg-purple-100 hover:bg-purple-200 text-purple-900 font-bold text-[11px] border border-purple-300 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
-                      >
-                        <Send className={`w-3 h-3 ${isSendingCode ? 'animate-spin' : ''}`} />
-                        <span>{isSendingCode ? 'Enviando...' : 'Enviar Código al Correo'}</span>
-                      </button>
-                    ) : (
-                      <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
-                        ✓ Código enviado a {codeSentToEmail}
-                      </span>
-                    )}
-                  </div>
-
-                  {requireCodeFlow && (
-                    <div className="space-y-1.5 pt-1">
-                      <label className="block text-[11px] font-bold text-purple-950">
-                        Ingrese el código de 6 dígitos recibido en su correo:
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          required
-                          maxLength={6}
-                          value={enteredCode}
-                          onChange={(e) => setEnteredCode(e.target.value.replace(/\D/g, ''))}
-                          placeholder="Ej: 849201"
-                          className="w-full px-3 py-2 rounded-xl bg-white border border-purple-300 text-center font-mono text-base tracking-widest font-bold text-purple-950 focus:ring-2 focus:ring-purple-700 focus:outline-none"
-                        />
+                      <div className="pt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('RESET')}
+                          className="flex-1 py-2 rounded-xl bg-gradient-to-r from-purple-800 to-indigo-800 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                        >
+                          <span>Ir al Formulario de Restablecer</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => setShowEmailPreviewModal(true)}
-                          title="Ver correo con el código"
-                          className="px-3 py-2 rounded-xl bg-purple-800 hover:bg-purple-700 text-white text-xs font-bold shrink-0 transition-colors cursor-pointer flex items-center gap-1"
+                          title="Ver la plantilla HTML enviada por correo"
+                          className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
                         >
-                          <Inbox className="w-3.5 h-3.5" />
-                          <span>Ver Código</span>
+                          <Inbox className="w-3.5 h-3.5 text-purple-700" />
+                          <span>Ver Correo</span>
                         </button>
                       </div>
                     </div>
                   )}
                 </div>
+              )}
 
-                {/* New Password */}
+              {/* Formulario de Correo */}
+              <form onSubmit={handleSendRecoveryLink} className="space-y-4">
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
-                      Nueva Contraseña *
-                    </label>
-                    <span className="text-[11px] text-purple-950 font-semibold bg-purple-100/90 px-2 py-0.5 rounded-md border border-purple-200">
-                      Máx. 10 dígitos ({recoverNewPassword.length}/10)
-                    </span>
-                  </div>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showRecoverPass ? 'text' : 'password'}
-                      required
-                      maxLength={10}
-                      value={recoverNewPassword}
-                      onChange={(e) => setRecoverNewPassword(e.target.value.slice(0, 10))}
-                      placeholder="Mínimo 4, máximo 10 caracteres"
-                      className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowRecoverPass(!showRecoverPass)}
-                      title={showRecoverPass ? 'Ocultar contraseña' : 'Ver contraseña'}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
-                    >
-                      {showRecoverPass ? <EyeOff className="w-4 h-4 text-purple-900" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Confirm New Password */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
-                      Confirmar Nueva Contraseña *
-                    </label>
-                    <span className="text-[11px] text-purple-950 font-semibold bg-purple-100/90 px-2 py-0.5 rounded-md border border-purple-200">
-                      Máx. 10 dígitos ({recoverConfirmPassword.length}/10)
-                    </span>
-                  </div>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showRecoverConfirmPass ? 'text' : 'password'}
-                      required
-                      maxLength={10}
-                      value={recoverConfirmPassword}
-                      onChange={(e) => setRecoverConfirmPassword(e.target.value.slice(0, 10))}
-                      placeholder="Repita la nueva contraseña"
-                      className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowRecoverConfirmPass(!showRecoverConfirmPass)}
-                      title={showRecoverConfirmPass ? 'Ocultar contraseña' : 'Ver contraseña'}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
-                    >
-                      {showRecoverConfirmPass ? <EyeOff className="w-4 h-4 text-purple-900" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Submit Button */}
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-800 via-indigo-800 to-purple-900 hover:from-purple-700 hover:to-indigo-700 text-white text-sm font-black shadow-lg shadow-purple-950/40 transition-all transform hover:-translate-y-0.5 cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                  <span>{isLoading ? 'Verificando y Notificando por Correo...' : 'Restablecer y Notificar al Correo'}</span>
-                </button>
-              </form>
-            )}
-
-            {/* FORM: CHANGE PASSWORD (LOGGED-IN USER) */}
-            {activeTab === 'CHANGE' && !successMessage && currentUser && (
-              <form onSubmit={handleLoggedChangeSubmit} className="space-y-4">
-                {/* User info header with notification target email */}
-                <div className="p-3.5 rounded-2xl bg-[#F4EFE6] border border-[#DDD5C2] space-y-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-slate-900">{currentUser.name}</p>
-                      <p className="text-slate-600 text-[11px] font-mono">{currentUser.username}</p>
-                    </div>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-950 border border-purple-300">
-                      {currentUser.role}
-                    </span>
-                  </div>
-
-                  <div className="pt-2 border-t border-[#E3DAC8] flex items-center gap-2 text-[11px] text-purple-950 font-medium">
-                    <Mail className="w-3.5 h-3.5 text-purple-800 shrink-0" />
-                    <span>
-                      Correo de notificación institucional: <strong>{currentUser.email}</strong>
-                    </span>
-                  </div>
-                </div>
-
-                {/* Current Password */}
-                <div>
-                  <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-1">
-                    Contraseña Actual *
+                  <label htmlFor="recovery-email-input" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Correo Electrónico Registrado <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Mail className="w-4 h-4 text-purple-800 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
-                      type={showCurrentPass ? 'text' : 'password'}
+                      id="recovery-email-input"
+                      type="email"
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      placeholder="ejemplo@institucion.edu.co o waespinosa2017@gmail.com"
+                      disabled={isSendingEmail}
                       required
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="Ingrese su clave actual"
-                      className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm"
+                      className="w-full pl-10 pr-4 py-3 rounded-2xl bg-white border border-[#E5DEC9] focus:border-purple-600 focus:ring-2 focus:ring-purple-200 text-xs sm:text-sm font-medium text-slate-900 placeholder:text-slate-400 transition-all outline-none"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowCurrentPass(!showCurrentPass)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
-                    >
-                      {showCurrentPass ? <EyeOff className="w-4 h-4 text-purple-900" /> : <Eye className="w-4 h-4" />}
-                    </button>
                   </div>
                 </div>
 
-                {/* New Password */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
-                      Nueva Contraseña *
-                    </label>
-                    <span className="text-[11px] text-purple-950 font-semibold bg-purple-100/90 px-2 py-0.5 rounded-md border border-purple-200">
-                      Máx. 10 dígitos ({newPassword.length}/10)
-                    </span>
-                  </div>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showNewPass ? 'text' : 'password'}
-                      required
-                      maxLength={10}
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value.slice(0, 10))}
-                      placeholder="Mínimo 4, máximo 10 caracteres"
-                      className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPass(!showNewPass)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
-                    >
-                      {showNewPass ? <EyeOff className="w-4 h-4 text-purple-900" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Confirm New Password */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
-                      Confirmar Nueva Contraseña *
-                    </label>
-                    <span className="text-[11px] text-purple-950 font-semibold bg-purple-100/90 px-2 py-0.5 rounded-md border border-purple-200">
-                      Máx. 10 dígitos ({confirmNewPassword.length}/10)
-                    </span>
-                  </div>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showConfirmNewPass ? 'text' : 'password'}
-                      required
-                      maxLength={10}
-                      value={confirmNewPassword}
-                      onChange={(e) => setConfirmNewPassword(e.target.value.slice(0, 10))}
-                      placeholder="Repita la nueva contraseña"
-                      className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmNewPass(!showConfirmNewPass)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
-                    >
-                      {showConfirmNewPass ? <EyeOff className="w-4 h-4 text-purple-900" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Submit Button */}
                 <button
                   type="submit"
-                  disabled={isLoading}
-                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-800 via-indigo-800 to-purple-900 hover:from-purple-700 hover:to-indigo-700 text-white text-sm font-black shadow-lg shadow-purple-950/40 transition-all transform hover:-translate-y-0.5 cursor-pointer flex items-center justify-center gap-2"
+                  disabled={isSendingEmail}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-purple-800 via-indigo-800 to-purple-900 hover:from-purple-700 hover:to-indigo-700 text-white text-xs sm:text-sm font-black shadow-lg shadow-purple-950/30 transition-all transform hover:-translate-y-0.5 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <KeyRound className="w-4 h-4" />
-                  <span>{isLoading ? 'Guardando y Notificando al Correo...' : 'Actualizar y Notificar por Correo'}</span>
+                  {isSendingEmail ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Verificando base de datos y enviando correo...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>Enviar Enlace de Recuperación</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
                 </button>
               </form>
-            )}
 
-          </div>
-
-          {/* Footer */}
-          <div className="p-4 bg-[#F5EFE4] border-t border-[#ECE5D8] flex items-center justify-between text-xs text-slate-600">
-            <div className="flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-700" />
-              <span>Cifrado y Notificación a Correos Institucionales</span>
+              {/* Acceso directo a Pantalla 2 si ya tiene el enlace */}
+              <div className="pt-3 border-t border-[#ECE5D8] flex items-center justify-between text-xs text-slate-600">
+                <span>¿Ya recibiste el enlace o código OTP?</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('RESET')}
+                  className="font-bold text-purple-900 hover:text-purple-700 underline cursor-pointer"
+                >
+                  Ingresar Token / Restablecer
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold transition-colors cursor-pointer"
-            >
-              Cerrar
-            </button>
-          </div>
+          )}
 
+          {/* ========================================================================= */}
+          {/* PANTALLA 2: FORMULARIO "RESTABLECER CONTRASEÑA" (TOKEN + NUEVA Y CONFIRMAR) */}
+          {/* ========================================================================= */}
+          {activeTab === 'RESET' && (
+            <div className="space-y-4 animate-in fade-in">
+              <div className="p-3.5 rounded-2xl bg-indigo-50/80 border border-indigo-200 text-indigo-950 text-xs leading-relaxed">
+                <p className="font-bold mb-1 flex items-center gap-1.5 text-indigo-900">
+                  <KeyRound className="w-3.5 h-3.5 text-indigo-700" />
+                  Paso Final: Configuración de Nueva Clave
+                </p>
+                El token temporal recibido por correo valida su identidad. Ingrese y confirme su nueva contraseña institucional (será encriptada de forma segura con <strong>bcrypt</strong>).
+              </div>
+
+              {/* Mensaje de Éxito al Restablecer */}
+              {resetSuccessMessage ? (
+                <div className="p-5 rounded-2xl bg-emerald-50 border-2 border-emerald-400 text-emerald-950 space-y-3 animate-in zoom-in-95">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+                    <div>
+                      <h4 className="font-black text-base text-emerald-900">¡Contraseña Restablecida con Éxito!</h4>
+                      <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
+                        {resetSuccessMessage}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="w-full py-3 rounded-2xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs sm:text-sm font-black shadow-md transition-colors cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>Ingresar con la Nueva Contraseña</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleResetPasswordWithToken} className="space-y-4">
+                  
+                  {/* Campo de Token / Código Capturado */}
+                  <div>
+                    <label htmlFor="reset-token-input" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Token o Código de Recuperación (15 min) <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <KeyRound className="w-4 h-4 text-indigo-700 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="reset-token-input"
+                        type="text"
+                        value={tokenInput}
+                        onChange={(e) => setTokenInput(e.target.value)}
+                        placeholder="Pegue aquí el token del enlace o el código OTP de 6 dígitos"
+                        required
+                        disabled={isResetting}
+                        className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white border border-[#E5DEC9] focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200 text-xs sm:text-sm font-mono text-slate-900 placeholder:text-slate-400 transition-all outline-none"
+                      />
+                    </div>
+                    {tokenInput && (
+                      <p className="text-[11px] text-emerald-700 font-medium mt-1 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>Token capturado del enlace o ingresado por el usuario.</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Campo: Nueva Contraseña */}
+                  <div>
+                    <label htmlFor="new-reset-password-input" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Nueva Contraseña (4 a 20 caracteres) <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="new-reset-password-input"
+                        type={showNewPassword ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Ingrese su nueva clave institucional"
+                        required
+                        minLength={4}
+                        maxLength={20}
+                        disabled={isResetting}
+                        className="w-full pl-10 pr-10 py-2.5 rounded-2xl bg-white border border-[#E5DEC9] focus:border-purple-600 focus:ring-2 focus:ring-purple-200 text-xs sm:text-sm font-medium text-slate-900 placeholder:text-slate-400 transition-all outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        aria-label={showNewPassword ? "Ocultar contraseña" : "Ver contraseña"}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
+                      >
+                        {showNewPassword ? <EyeOff className="w-4 h-4 text-purple-800" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Campo: Confirmar Contraseña */}
+                  <div>
+                    <label htmlFor="confirm-reset-password-input" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Confirmar Contraseña <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="confirm-reset-password-input"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Repita exactamente la nueva clave"
+                        required
+                        minLength={4}
+                        maxLength={20}
+                        disabled={isResetting}
+                        className="w-full pl-10 pr-10 py-2.5 rounded-2xl bg-white border border-[#E5DEC9] focus:border-purple-600 focus:ring-2 focus:ring-purple-200 text-xs sm:text-sm font-medium text-slate-900 placeholder:text-slate-400 transition-all outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        aria-label={showConfirmPassword ? "Ocultar confirmación de contraseña" : "Ver confirmación de contraseña"}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
+                      >
+                        {showConfirmPassword ? <EyeOff className="w-4 h-4 text-purple-800" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+
+                    {/* Validación visual de coincidencia */}
+                    {confirmPassword && (
+                      <p className={`text-[11px] font-bold mt-1.5 flex items-center gap-1 ${
+                        newPassword === confirmPassword ? 'text-emerald-700' : 'text-red-600'
+                      }`}>
+                        {newPassword === confirmPassword ? (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Las contraseñas coinciden perfectamente.</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+                            <span>Las contraseñas aún no coinciden.</span>
+                          </>
+                        )}
+                      </p>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isResetting || !tokenInput || !newPassword || newPassword !== confirmPassword}
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-indigo-800 via-purple-800 to-indigo-900 hover:from-indigo-700 hover:to-purple-700 text-white text-xs sm:text-sm font-black shadow-lg shadow-indigo-950/30 transition-all transform hover:-translate-y-0.5 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isResetting ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Validando token y encriptando con bcrypt...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                        <span>Restablecer Contraseña</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+
+                  <div className="pt-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('FORGOT')}
+                      className="text-xs text-slate-600 hover:text-purple-900 underline cursor-pointer"
+                    >
+                      ← Volver a solicitar otro enlace por correo
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 3: CAMBIAR CONTRASEÑA (USUARIO CON SESIÓN INICIADA)                   */}
+          {/* ========================================================================= */}
+          {activeTab === 'CHANGE' && currentUser && (
+            <form onSubmit={handleChangeActivePassword} className="space-y-4 animate-in fade-in">
+              <div className="p-3.5 rounded-2xl bg-purple-50/70 border border-purple-200 text-purple-950 text-xs">
+                Modificar la contraseña actual para el usuario activo: <strong>{currentUser.name}</strong> ({currentUser.username}).
+              </div>
+
+              {resetSuccessMessage ? (
+                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-950 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-sm text-emerald-900">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                    <span>¡Cambio Exitoso!</span>
+                  </div>
+                  <p className="text-xs text-emerald-800">{resetSuccessMessage}</p>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="w-full mt-2 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Listo, cerrar ventana
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label htmlFor="current-user-password-input" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Contraseña Actual <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="current-user-password-input"
+                        type={showCurrentPassword ? 'text' : 'password'}
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Contraseña actual"
+                        required
+                        className="w-full pl-10 pr-10 py-2.5 rounded-2xl bg-white border border-[#E5DEC9] focus:border-purple-600 text-xs sm:text-sm font-medium text-slate-900 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                        aria-label={showCurrentPassword ? "Ocultar contraseña actual" : "Ver contraseña actual"}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
+                      >
+                        {showCurrentPassword ? <EyeOff className="w-4 h-4 text-purple-800" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="active-new-password-input" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Nueva Contraseña <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="active-new-password-input"
+                        type={showNewPassword ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Nueva contraseña (4 a 20 caracteres)"
+                        required
+                        minLength={4}
+                        maxLength={20}
+                        className="w-full pl-10 pr-10 py-2.5 rounded-2xl bg-white border border-[#E5DEC9] focus:border-purple-600 text-xs sm:text-sm font-medium text-slate-900 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        aria-label={showNewPassword ? "Ocultar nueva contraseña" : "Ver nueva contraseña"}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
+                      >
+                        {showNewPassword ? <EyeOff className="w-4 h-4 text-purple-800" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="active-confirm-password-input" className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Confirmar Nueva Contraseña <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="active-confirm-password-input"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Repita la nueva contraseña"
+                        required
+                        minLength={4}
+                        maxLength={20}
+                        className="w-full pl-10 pr-10 py-2.5 rounded-2xl bg-white border border-[#E5DEC9] focus:border-purple-600 text-xs sm:text-sm font-medium text-slate-900 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        aria-label={showConfirmPassword ? "Ocultar confirmación" : "Ver confirmación"}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
+                      >
+                        {showConfirmPassword ? <EyeOff className="w-4 h-4 text-purple-800" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isResetting || !newPassword || newPassword !== confirmPassword}
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-purple-800 to-indigo-800 hover:from-purple-700 hover:to-indigo-700 text-white text-xs sm:text-sm font-black shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isResetting ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Actualizando clave...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>Guardar Nueva Contraseña</span>
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
+            </form>
+          )}
+        </div>
+
+        {/* Modal Footer */}
+        <div className="p-4 bg-[#F8F5EE] border-t border-[#E5DEC9] flex items-center justify-between text-xs text-slate-500">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Servicio SMTP / Gmail y Encriptación Bcrypt Activos</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold transition-colors cursor-pointer"
+          >
+            Cerrar
+          </button>
         </div>
       </div>
 
-      {/* Embedded Email Preview Modal */}
-      {showEmailPreviewModal && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
-          <div className="bg-[#FFFFFF] rounded-3xl border border-[#DCD3BE] shadow-2xl max-w-2xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto flex flex-col max-h-[88vh]">
-            
-            {/* Modal Top Header */}
-            <div className="p-4 sm:p-5 bg-gradient-to-r from-purple-950 via-slate-900 to-indigo-950 text-white flex items-center justify-between border-b border-purple-800/40">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-purple-600/30 flex items-center justify-center border border-purple-400/30 text-purple-200">
-                  <Inbox className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-sm sm:text-base font-black text-white">
-                    Vista Previa del Correo Electrónico Institucional
-                  </h4>
-                  <p className="text-[11px] text-purple-300">
-                    Notificación despachada con sello de seguridad institucional
-                  </p>
-                </div>
+      {/* Visor Modal de Plantilla HTML del Correo Enviado */}
+      {showEmailPreviewModal && dispatchedTokenData && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
+          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-purple-200 animate-in zoom-in-95">
+            <div className="p-4 bg-gradient-to-r from-purple-950 to-indigo-950 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Inbox className="w-5 h-5 text-purple-300" />
+                <span className="font-bold text-sm">Vista Previa: Correo Electrónico Institucional (Nodemailer)</span>
               </div>
-
               <button
                 type="button"
                 onClick={() => setShowEmailPreviewModal(false)}
-                className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Email Metadata Header Bar */}
-            <div className="p-3 bg-[#F8F5EE] border-b border-[#E7DEC9] text-xs text-slate-700 space-y-1">
-              <div className="flex flex-wrap items-center justify-between gap-1">
-                <span className="font-bold text-purple-950">
-                  Para:{' '}
-                  <span className="text-slate-800 font-mono">
-                    {lastDispatchedEmail?.toEmail || codeSentToEmail || currentUser?.email || 'correo@institucion.edu.co'}
+            <div className="p-4 bg-slate-50 border-b border-slate-200 text-xs space-y-1">
+              <p><strong>Para:</strong> {dispatchedTokenData.email}</p>
+              <p><strong>Asunto:</strong> [Seguridad Institucional] Enlace de Restablecimiento de Contraseña</p>
+              <p><strong>Token temporal:</strong> <code className="bg-slate-200 px-1 py-0.5 rounded text-[11px] font-mono break-all">{dispatchedTokenData.token}</code></p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 bg-[#F3EFEA]">
+              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm max-w-xl mx-auto text-slate-800 space-y-4">
+                <div className="text-center pb-4 border-b border-slate-200">
+                  <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-[10px] font-extrabold uppercase border border-amber-300">
+                    Seguridad y Control Institucional
                   </span>
-                </span>
-                <span className="text-[10px] text-slate-500 font-medium">
-                  {new Date().toLocaleString('es-CO')}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-600">
-                <strong>Asunto:</strong> {lastDispatchedEmail?.subject || '[Seguridad Institucional] Notificación de Clave'}
-              </p>
-            </div>
-
-            {/* Email HTML Body View */}
-            <div className="p-4 overflow-y-auto flex-1 bg-[#F4EFEB]">
-              {lastDispatchedEmail?.htmlContent ? (
-                <div
-                  className="rounded-2xl overflow-hidden shadow-md"
-                  dangerouslySetInnerHTML={{ __html: lastDispatchedEmail.htmlContent }}
-                />
-              ) : (
-                <div className="p-6 rounded-2xl bg-white border border-[#DCD3BE] shadow text-xs space-y-4">
-                  <div className="text-center p-4 bg-purple-950 text-white rounded-xl">
-                    <h3 className="font-black text-sm">SISTEMA DE MANTENIMIENTO INSTITUCIONAL</h3>
-                    <p className="text-[10px] text-purple-300 uppercase">Aviso Oficial de Seguridad</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-purple-50 border border-purple-200">
-                    <p className="font-bold text-purple-900">
-                      Notificación de Seguridad: Clave de acceso actualizada
-                    </p>
-                    <p className="text-slate-700 mt-1">
-                      Se ha completado el proceso de actualización para su cuenta institucional.
-                    </p>
-                  </div>
+                  <h3 className="text-lg font-black text-purple-950 mt-2">SISTEMA DE MANTENIMIENTO</h3>
+                  <p className="text-xs text-purple-700">Restablecimiento Oficial de Contraseña</p>
                 </div>
-              )}
+
+                <div className="space-y-2 text-xs leading-relaxed text-slate-700">
+                  <p>Estimado(a) usuario institucional,</p>
+                  <p>Hemos recibido una solicitud para restablecer la contraseña de su cuenta. Haga clic en el botón a continuación para configurar su nueva clave:</p>
+                </div>
+
+                <div className="text-center py-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (dispatchedTokenData.token) {
+                        setTokenInput(dispatchedTokenData.token);
+                        setActiveTab('RESET');
+                        setShowEmailPreviewModal(false);
+                      }
+                    }}
+                    className="px-6 py-3 rounded-xl bg-purple-900 hover:bg-purple-800 text-white font-black text-xs shadow-lg shadow-purple-900/30 cursor-pointer inline-flex items-center gap-2"
+                  >
+                    <Lock className="w-4 h-4" />
+                    <span>🔐 Restablecer mi Contraseña (Hacer Clic Aquí)</span>
+                  </button>
+                  <p className="text-[11px] text-slate-500 mt-2">Validez: 15 minutos desde la emisión</p>
+                </div>
+
+                {dispatchedTokenData.otp && (
+                  <div className="p-3 bg-slate-50 border-2 border-dashed border-indigo-300 rounded-xl text-center">
+                    <p className="text-[10px] font-extrabold text-slate-500 uppercase">Código OTP de Verificación Rápida:</p>
+                    <p className="text-2xl font-mono font-black text-indigo-700 tracking-widest">{dispatchedTokenData.otp}</p>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Modal Bottom Footer */}
-            <div className="p-3.5 bg-[#F8F5EE] border-t border-[#E7DEC9] flex items-center justify-between text-xs">
-              <span className="text-[11px] text-emerald-800 font-bold flex items-center gap-1">
-                <FileCheck2 className="w-3.5 h-3.5 text-emerald-700" />
-                Entrega confirmada y registrada en Firestore
-              </span>
+            <div className="p-3 bg-white border-t border-slate-200 flex justify-end">
               <button
                 type="button"
                 onClick={() => setShowEmailPreviewModal(false)}
-                className="px-4 py-1.5 rounded-xl bg-purple-900 hover:bg-purple-800 text-white font-bold transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-purple-900 text-white font-bold text-xs cursor-pointer"
               >
                 Cerrar Vista Previa
               </button>
             </div>
-
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 };

@@ -92,7 +92,9 @@ export default function App() {
   const [isApprovalPanelOpen, setIsApprovalPanelOpen] = useState(false);
   const [isAuthorizedPersonnelModalOpen, setIsAuthorizedPersonnelModalOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
-  const [passwordModalMode, setPasswordModalMode] = useState<'RECOVER' | 'CHANGE'>('RECOVER');
+  const [passwordModalMode, setPasswordModalMode] = useState<'FORGOT' | 'RESET' | 'CHANGE' | 'RECOVER'>('FORGOT');
+  const [resetTokenFromUrl, setResetTokenFromUrl] = useState<string>('');
+  const [resetEmailFromUrl, setResetEmailFromUrl] = useState<string>('');
   const [isArchitectureModalOpen, setIsArchitectureModalOpen] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -133,6 +135,23 @@ export default function App() {
 
   // Multi-user Real-Time Firestore Synchronization & Live Fallback
   useEffect(() => {
+    // Check if user entered via a password recovery email link (?token=... or #reset-password)
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get('token');
+      const email = urlParams.get('email');
+      const hash = window.location.hash;
+
+      if (token || hash === '#reset-password') {
+        if (token) setResetTokenFromUrl(token);
+        if (email) setResetEmailFromUrl(email);
+        setPasswordModalMode('RESET');
+        setIsPasswordModalOpen(true);
+      }
+    } catch (e) {
+      console.warn('URL parsing warning:', e);
+    }
+
     // Initial fetch
     fetchData();
 
@@ -317,15 +336,26 @@ export default function App() {
           onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
           onOpenHelpModal={() => setIsHelpModalOpen(true)}
           onOpenPasswordRecovery={() => {
-            setPasswordModalMode('RECOVER');
+            setPasswordModalMode('FORGOT');
             setIsPasswordModalOpen(true);
           }}
         />
         <PasswordManagementModal
           isOpen={isPasswordModalOpen}
-          onClose={() => setIsPasswordModalOpen(false)}
+          onClose={() => {
+            setIsPasswordModalOpen(false);
+            if (window.location.search.includes('token=') || window.location.hash === '#reset-password') {
+              window.history.replaceState({}, document.title, window.location.pathname);
+            }
+          }}
           mode={passwordModalMode}
+          initialToken={resetTokenFromUrl}
+          initialEmail={resetEmailFromUrl}
           currentUser={currentUser}
+          onPasswordChangedSuccessfully={() => {
+            setSyncFeedback('Contraseña restablecida de forma segura. Inicie sesión para continuar.');
+            setTimeout(() => setSyncFeedback(null), 6000);
+          }}
         />
         <HexagonalArchitectureModal
           isOpen={isArchitectureModalOpen}
@@ -600,19 +630,34 @@ export default function App() {
         onClose={() => setIsAuthModalOpen(false)}
         onLogin={handleLogin}
         onRegister={handleRegister}
-        onOpenPasswordRecovery={() => {
+        onOpenPasswordRecovery={(prefilled) => {
           setIsAuthModalOpen(false);
-          setPasswordModalMode('RECOVER');
+          setPasswordModalMode('FORGOT');
+          if (prefilled && prefilled.includes('@')) {
+            setResetEmailFromUrl(prefilled);
+          }
           setIsPasswordModalOpen(true);
         }}
       />
 
-      {/* 5. Password Management Modal (Change / Recover) */}
+      {/* 5. Password Management Modal (Pantalla 1: Recuperar, Pantalla 2: Restablecer con Token) */}
       <PasswordManagementModal
         isOpen={isPasswordModalOpen}
-        onClose={() => setIsPasswordModalOpen(false)}
+        onClose={() => {
+          setIsPasswordModalOpen(false);
+          // Clean token from browser URL if present
+          if (window.location.search.includes('token=') || window.location.hash === '#reset-password') {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        }}
         mode={passwordModalMode}
+        initialToken={resetTokenFromUrl}
+        initialEmail={resetEmailFromUrl}
         currentUser={currentUser}
+        onPasswordChangedSuccessfully={() => {
+          setSyncFeedback('Contraseña restablecida de forma segura. Inicie sesión para continuar.');
+          setTimeout(() => setSyncFeedback(null), 6000);
+        }}
       />
 
       {/* 6. Superior Approval Management Panel */}
