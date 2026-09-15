@@ -1349,5 +1349,35 @@ async function startServer() {
     console.log(`Sistema de Mantenimiento Institucional activo en http://0.0.0.0:${PORT}`);
   });
 }
+// Integración de recuperación de contraseña para RDMI
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const emailIngresado = (req.body.correo || req.body.email || '').toLowerCase().trim();
+
+    if (!emailIngresado) {
+      return res.status(400).json({ error: 'Debes ingresar un correo electrónico' });
+    }
+
+    // Busca coincidencia sin importar mayúsculas/minúsculas
+    const usuarioEncontrado = usuarios.find((u: any) => 
+      (u.email || u.correo || u['correo electrónico'] || '').toLowerCase().trim() === emailIngresado
+    );
+
+    if (!usuarioEncontrado) {
+      return res.status(404).json({ error: 'El correo electrónico no está registrado' });
+    }
+
+    // Importación dinámica de mailer
+    const { sendResetPasswordEmail } = await import('./utils/mailer');
+    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const resetUrl = `https://tu-app.com/reset-password?token=${token}`;
+
+    await sendResetPasswordEmail(emailIngresado, resetUrl);
+
+    return res.status(200).json({ éxito: true, mensaje: 'Correo enviado correctamente' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Error al procesar la solicitud', detalle: error });
+  }
+});
 
 startServer();
