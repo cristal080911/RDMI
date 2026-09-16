@@ -390,7 +390,10 @@ export class ApiClient {
     email: string;
     expiresInMinutes: number;
     codigo?: string;
+    resetLink?: string;
     smtpConfigured?: boolean;
+    smtpDelivered?: boolean;
+    smtpNotice?: string;
   }> {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
@@ -403,52 +406,24 @@ export class ApiClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail })
       });
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data.error || 'Error al solicitar el código de verificación.');
-      }
 
-      // Sincronizar también en Firestore del cliente si está disponible
-      try {
-        if (data.codigo) {
-          await FirebaseDatabaseService.solicitarCodigoOtp(cleanEmail).catch(() => {});
-        }
-      } catch {
-        // Ignorar si el backend ya lo persistió
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        const errorMsg = data.error || data.detail || 'Error al solicitar el código de verificación.';
+        console.error('❌ [API CLIENT] Error devuelto por el servidor:', errorMsg);
+        throw new Error(errorMsg);
       }
 
       return data;
     } catch (err: any) {
-      // Fallback directo a Firebase Firestore
-      try {
-        const fbResult = await FirebaseDatabaseService.solicitarCodigoOtp(cleanEmail);
-        return fbResult;
-      } catch (fbErr: any) {
-        // Si no está en Firestore, fallback local
-        const localUsers = getLocalStoredUsers();
-        const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
-        if (!user) {
-          throw new Error(err?.message || fbErr?.message || 'El correo electrónico no está registrado');
-        }
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        (user as any).resetPasswordOtp = otp;
-        (user as any).resetPasswordExpires = Date.now() + 10 * 60 * 1000;
-        setLocalStoredUsers(localUsers);
-
-        return {
-          success: true,
-          message: 'Código de verificación generado para su correo electrónico.',
-          email: user.email,
-          expiresInMinutes: 10,
-          codigo: otp,
-          smtpConfigured: false
-        };
-      }
+      console.error('❌ [API CLIENT] Error al solicitar código:', err?.message || err);
+      throw new Error(err?.message || 'Error al conectar con el servidor de correo institucional.');
     }
   }
 
   /**
-   * Endpoint 2: Valida el código de 6 dígitos y que no hayan pasado más de 10 minutos en Firebase.
+   * Endpoint 2: Valida el código de 6 dígitos y que no hayan pasado más de 15 minutos.
    */
   static async validarCodigo(email: string, codigo: string): Promise<{
     success: boolean;
@@ -466,49 +441,27 @@ export class ApiClient {
       throw new Error('Debe ingresar el código de verificación de 6 dígitos.');
     }
 
+    let resp: Response;
     try {
-      const resp = await fetch('/api/auth/validar-codigo', {
+      resp = await fetch('/api/auth/validar-codigo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail, codigo: cleanCode })
       });
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data.error || 'Código incorrecto o expirado.');
-      }
-      return data;
-    } catch (err: any) {
-      // Fallback directo a Firebase Firestore
-      try {
-        return await FirebaseDatabaseService.validarCodigoOtp(cleanEmail, cleanCode);
-      } catch (fbErr: any) {
-        // Fallback resiliente local
-        const localUsers = getLocalStoredUsers();
-        const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
-        if (!user) {
-          throw new Error(err?.message || fbErr?.message || 'El correo electrónico no está registrado');
-        }
-        if (!(user as any).resetPasswordOtp || !(user as any).resetPasswordExpires) {
-          throw new Error('No se ha solicitado ningún código o ya fue utilizado.');
-        }
-        if (Date.now() > (user as any).resetPasswordExpires) {
-          throw new Error('El código de verificación ha expirado');
-        }
-        if ((user as any).resetPasswordOtp !== cleanCode) {
-          throw new Error('El código ingresado es incorrecto');
-        }
-        return {
-          success: true,
-          message: 'Código verificado con éxito.',
-          email: user.email,
-          valid: true
-        };
-      }
+    } catch (networkErr: any) {
+      // Fallback a Firebase Firestore únicamente ante fallos de conexión o red
+      return await FirebaseDatabaseService.validarCodigoOtp(cleanEmail, cleanCode);
     }
+
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.error || 'Código incorrecto o expirado.');
+    }
+    return data;
   }
 
   /**
-   * Endpoint 3: Cambia la contraseña encriptándola y actualizándola en Firebase Firestore.
+   * Endpoint 3: Cambia la contraseña encriptándola y actualizándola en la base de datos.
    */
   static async cambiarClave(payload: {
     email: string;
@@ -532,8 +485,9 @@ export class ApiClient {
     if (cleanPass !== cleanConfirm) throw new Error('Las contraseñas no coinciden. Verifique ambos campos.');
     if (cleanPass.length < 4) throw new Error('La nueva contraseña debe tener al menos 4 caracteres.');
 
+    let resp: Response;
     try {
-      const resp = await fetch('/api/auth/cambiar-clave', {
+      resp = await fetch('/api/auth/cambiar-clave', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -543,71 +497,43 @@ export class ApiClient {
           confirmarContrasena: cleanConfirm
         })
       });
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data.error || 'Error al cambiar la contraseña.');
-      }
-
-      // Sincronizar en Firebase Firestore
-      try {
-        await FirebaseDatabaseService.restablecerContrasenaConOtp({
-          email: cleanEmail,
-          codigo: cleanCode,
-          nuevaContrasena: cleanPass,
-          confirmarContrasena: cleanConfirm
-        }).catch(() => {});
-      } catch {
-        // Ignorar si el backend ya actualizó Firestore
-      }
-
-      // También sincronizar con la base local para consistencia
-      const localUsers = getLocalStoredUsers();
-      const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      if (user) {
-        user.password = cleanPass;
-        (user as any).resetPasswordOtp = undefined;
-        (user as any).resetPasswordExpires = undefined;
-        setLocalStoredUsers(localUsers);
-      }
-
-      return data;
-    } catch (err: any) {
-      // Fallback directo a Firebase Firestore
-      try {
-        const fbResult = await FirebaseDatabaseService.restablecerContrasenaConOtp({
-          email: cleanEmail,
-          codigo: cleanCode,
-          nuevaContrasena: cleanPass,
-          confirmarContrasena: cleanConfirm
-        });
-        return fbResult;
-      } catch (fbErr: any) {
-        // Fallback resiliente
-        const localUsers = getLocalStoredUsers();
-        const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
-        if (!user) {
-          throw new Error(err?.message || fbErr?.message || 'El correo electrónico no está registrado');
-        }
-        if (!(user as any).resetPasswordExpires || Date.now() > (user as any).resetPasswordExpires) {
-          throw new Error('El código de verificación ha expirado');
-        }
-        if ((user as any).resetPasswordOtp !== cleanCode) {
-          throw new Error('El código ingresado es incorrecto');
-        }
-
-        user.password = cleanPass;
-        (user as any).resetPasswordOtp = undefined;
-        (user as any).resetPasswordExpires = undefined;
-        setLocalStoredUsers(localUsers);
-
-        const { password: _, ...safeUser } = user;
-        return {
-          success: true,
-          message: '¡Contraseña actualizada exitosamente en Firebase! Ya puede iniciar sesión con su nueva clave.',
-          user: safeUser
-        };
-      }
+    } catch (networkErr: any) {
+      // Fallback a Firebase Firestore únicamente ante fallos de conexión o red
+      return await FirebaseDatabaseService.restablecerContrasenaConOtp({
+        email: cleanEmail,
+        codigo: cleanCode,
+        nuevaContrasena: cleanPass,
+        confirmarContrasena: cleanConfirm
+      });
     }
+
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.error || 'Error al cambiar la contraseña.');
+    }
+
+    // Sincronizar en Firebase Firestore y estado local para que el usuario pueda iniciar sesión inmediatamente
+    try {
+      await FirebaseDatabaseService.restablecerContrasenaConOtp({
+        email: cleanEmail,
+        codigo: cleanCode,
+        nuevaContrasena: cleanPass,
+        confirmarContrasena: cleanConfirm
+      }).catch(() => {});
+    } catch {
+      // Ignorar si el backend ya actualizó Firestore
+    }
+
+    const localUsers = getLocalStoredUsers();
+    const user = localUsers.find(u => u.email.toLowerCase() === cleanEmail);
+    if (user) {
+      user.password = cleanPass;
+      (user as any).resetPasswordOtp = undefined;
+      (user as any).resetPasswordExpires = undefined;
+      setLocalStoredUsers(localUsers);
+    }
+
+    return data;
   }
 
   static async requestForgotPassword(email: string): Promise<{

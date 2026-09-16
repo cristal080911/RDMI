@@ -14,21 +14,36 @@ export interface EmailOptions {
 // Nodemailer transporter initialization
 let transporter: Transporter | null = null;
 
-export function getMailTransporter(): Transporter | null {
-  const user = process.env.EMAIL_USER;
-  const pass = process.env.EMAIL_PASS;
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+// Correo por defecto del administrador de la plataforma RDMI (dinámico desde EMAIL_USER o fallback institucional)
+export const DEFAULT_ADMIN_EMAIL = (process.env.EMAIL_USER || 'cristalpulecio@gmail.com').trim();
+
+let cachedUser = '';
+let cachedPass = '';
+
+export function getMailTransporter(): { transporter: Transporter | null; error?: string } {
+  const user = (process.env.EMAIL_USER || DEFAULT_ADMIN_EMAIL).trim();
+  const pass = process.env.EMAIL_PASS ? process.env.EMAIL_PASS.trim() : '';
+  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
   const port = Number(process.env.SMTP_PORT) || 465;
 
-  if (!user || !pass) {
-    return null;
+  const isPlaceholderPass = !pass || pass.includes('tu_contrase') || pass.includes('placeholder') || pass === 'password';
+
+  if (!user || isPlaceholderPass) {
+    transporter = null;
+    const missing = !user
+      ? 'Falta la variable EMAIL_USER en el entorno.'
+      : 'La variable EMAIL_PASS contiene un marcador de posición de ejemplo ("tu_contraseña_de_aplicacion_aqui"). Para despachar correos reales a bandejas de entrada, configure su Contraseña de Aplicación de 16 caracteres de Google en .env.';
+    return { transporter: null, error: missing };
   }
 
-  if (!transporter) {
+  if (!transporter || cachedUser !== user || cachedPass !== pass) {
+    cachedUser = user;
+    cachedPass = pass;
+    console.log(`🔌 [NODEMAILER] Configurando transporter SMTP: host=${host}, port=${port}, secure=${port === 465}, user=${user}`);
     transporter = nodemailer.createTransport({
       host,
       port,
-      secure: port === 465, // true for 465, false for other ports
+      secure: port === 465, // true para puerto 465 (SSL/TLS)
       auth: {
         user,
         pass
@@ -39,7 +54,7 @@ export function getMailTransporter(): Transporter | null {
     });
   }
 
-  return transporter;
+  return { transporter };
 }
 
 /**
@@ -210,14 +225,14 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
   sentTo: string;
   previewUrl?: string;
   smtpConfigured: boolean;
+  error?: string;
 }> {
   const { toEmail } = options;
   const { subject, html, text } = generatePasswordResetEmailHtml(options);
 
-  const client = getMailTransporter();
-  const fromAddress = process.env.EMAIL_USER
-    ? `"Sistema de Mantenimiento Institucional" <${process.env.EMAIL_USER}>`
-    : '"Sistema de Mantenimiento Institucional" <seguridad@institucion.edu.co>';
+  const { transporter: client, error: configError } = getMailTransporter();
+  const user = (process.env.EMAIL_USER || DEFAULT_ADMIN_EMAIL).trim();
+  const fromAddress = `"RDMI" <${user}>`;
 
   console.log(`\n======================================================`);
   console.log(`📧 [NODEMAILER DISPATCH: RECUPERACIÓN DE CONTRASEÑA]`);
@@ -226,15 +241,18 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
   console.log(`🔢 OTP: ${options.otp}`);
   console.log(`🌐 Enlace: ${options.resetLink}`);
   console.log(`⏳ Validez: ${options.expiresInMinutes || 15} minutos`);
-  console.log(`⚙️ SMTP Configurado: ${Boolean(client)} (Usuario: ${process.env.EMAIL_USER || 'No configurado'})`);
+  console.log(`⚙️ SMTP Configurado: ${Boolean(client)} (Usuario: ${user || 'No configurado en .env'})`);
   console.log(`======================================================\n`);
 
   if (!client) {
+    const errorMsg = configError || 'Credenciales de correo no configuradas en el entorno (EMAIL_USER / EMAIL_PASS no definidos en .env). No se simula el envío.';
+    console.error(`❌ [NODEMAILER ERROR] ${errorMsg}`);
     return {
-      success: true,
-      message: 'Correo de recuperación generado (Modo seguro: sin credenciales SMTP en .env, procesado por simulación local activa).',
+      success: false,
+      message: errorMsg,
       sentTo: toEmail,
-      smtpConfigured: false
+      smtpConfigured: false,
+      error: errorMsg
     };
   }
 
@@ -242,7 +260,7 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
     const info = await client.sendMail({
       from: fromAddress,
       to: toEmail,
-      subject,
+      subject: 'Restablece tu contraseña | RDMI',
       text,
       html
     });
@@ -256,12 +274,16 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
     };
   } catch (err: any) {
     console.error(`❌ [NODEMAILER ERROR] Fallo al enviar correo SMTP:`, err?.message || err);
-    // Even if external SMTP times out or rejects bad credentials, return detailed status
+    let errorDetail = err?.message || 'Error de conexión SMTP';
+    if (err?.code === 'EAUTH' || (err?.response && String(err.response).includes('535'))) {
+      errorDetail = 'Error de autenticación SMTP: Usuario o contraseña de correo no válidos. En Gmail debe usarse una Contraseña de Aplicación.';
+    }
     return {
-      success: true,
-      message: `Enlace y código generados en el servidor. Advertencia SMTP: ${err?.message || 'Error de conexión'}. Puede usar el código en pantalla.`,
+      success: false,
+      message: `Error al enviar correo por SMTP: ${errorDetail}`,
       sentTo: toEmail,
-      smtpConfigured: true
+      smtpConfigured: true,
+      error: errorDetail
     };
   }
 }
@@ -280,20 +302,49 @@ export async function sendVerificationCodeEmail(options: {
   message: string;
   sentTo: string;
   smtpConfigured: boolean;
+  error?: string;
 }> {
-  const { toEmail, recipientName, code, expiresInMinutes = 10 } = options;
-  const client = getMailTransporter();
-  const fromAddress = process.env.EMAIL_USER
-    ? `"Seguridad RDMI" <${process.env.EMAIL_USER}>`
-    : '"Seguridad Institucional RDMI" <seguridad@institucion.edu.co>';
+  const { toEmail, recipientName, code, expiresInMinutes = 15 } = options;
+  const user = (process.env.EMAIL_USER || DEFAULT_ADMIN_EMAIL).trim();
+  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const port = Number(process.env.SMTP_PORT) || 465;
 
-  const subject = `Tu código de verificación para restablecer tu contraseña: ${code}`;
+  console.log(`\n======================================================`);
+  console.log(`📧 [INTENTO DE ENVÍO DE CORREO REAL - RECUPERACIÓN RDMI]`);
+  console.log(`➡️ Para: ${toEmail}`);
+  console.log(`🔢 Código OTP: ${code}`);
+  console.log(`⏳ Validez: ${expiresInMinutes} minutos`);
+  console.log(`⚙️ Servidor SMTP: ${host}:${port} (SSL: ${port === 465})`);
+  console.log(`👤 Usuario emisor (EMAIL_USER): ${user || '⚠️ NO CONFIGURADO'}`);
+  console.log(`🔑 Contraseña (EMAIL_PASS): ${process.env.EMAIL_PASS ? 'Configurada' : '⚠️ NO CONFIGURADA'}`);
+  console.log(`======================================================\n`);
+
+  const { transporter: client, error: configError } = getMailTransporter();
+
+  if (!client) {
+    const errorMsg = configError || 'Credenciales de correo no configuradas en el entorno (.env). Configure EMAIL_USER y EMAIL_PASS para enviar correos reales.';
+    console.warn(`⚠️ [AVISO SMTP] ${errorMsg}`);
+    return {
+      success: false,
+      message: errorMsg,
+      error: errorMsg,
+      sentTo: toEmail,
+      smtpConfigured: false
+    };
+  }
+
+  // Remitente exacto requerido: "RDMI" <tu_correo@gmail.com>
+  const fromAddress = `"RDMI" <${user}>`;
+
+  // Asunto exacto requerido: "Restablece tu contraseña | RDMI"
+  const subject = 'Restablece tu contraseña | RDMI';
+
   const greeting = recipientName ? `Hola ${recipientName},` : 'Hola,';
 
   // Texto plano formal y conciso
-  const text = `${greeting} tu código de verificación para restablecer tu contraseña es: ${code}. Este código vencerá en ${expiresInMinutes} minutos.`;
+  const text = `${greeting}\n\nTu código de verificación para restablecer tu contraseña en RDMI es: ${code}\n\nEste código vencerá en ${expiresInMinutes} minutos.\n\nSi no solicitaste este cambio, puedes ignorar este mensaje.\n\nRDMI - Sistema de Infraestructura y Mantenimiento`;
 
-  // Plantilla HTML formal y limpia
+  // Plantilla HTML limpia y formal con el código OTP de 6 dígitos bien destacado y claro
   const html = `
 <!DOCTYPE html>
 <html lang="es">
@@ -303,28 +354,32 @@ export async function sendVerificationCodeEmail(options: {
   <title>${subject}</title>
   <style>
     body { margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B; }
-    .container { max-width: 560px; margin: 30px auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); }
+    .container { max-width: 540px; margin: 32px auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); }
     .header { background: #1E1B4B; padding: 28px 24px; text-align: center; color: #FFFFFF; }
-    .header h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -0.3px; color: #FFFFFF; }
-    .header p { margin: 6px 0 0 0; font-size: 11px; text-transform: uppercase; color: #A5B4FC; letter-spacing: 1px; font-weight: 600; }
+    .header h1 { margin: 0; font-size: 24px; font-weight: 900; letter-spacing: 1.5px; color: #FFFFFF; }
+    .header p { margin: 6px 0 0 0; font-size: 11px; text-transform: uppercase; color: #A5B4FC; letter-spacing: 1px; font-weight: 700; }
     .body { padding: 32px 28px; }
-    .message { font-size: 16px; line-height: 1.6; color: #334155; margin: 0 0 24px 0; }
+    .headline { font-size: 18px; font-weight: 800; color: #1E1B4B; margin: 0 0 14px 0; }
+    .message { font-size: 15px; line-height: 1.6; color: #334155; margin: 0 0 24px 0; }
     .code-box { background: #F1F5F9; border: 2px dashed #6366F1; border-radius: 14px; padding: 24px; text-align: center; margin: 24px 0; }
-    .code-label { font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-    .code-digits { font-family: 'Courier New', Courier, monospace; font-size: 38px; font-weight: 900; letter-spacing: 8px; color: #4338CA; margin: 4px 0; }
+    .code-label { font-size: 12px; font-weight: 800; color: #4F46E5; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; }
+    .code-digits { font-family: 'Courier New', Courier, monospace; font-size: 42px; font-weight: 900; letter-spacing: 10px; color: #312E81; margin: 8px 0; padding-left: 10px; }
     .notice { font-size: 13px; color: #B45309; background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 10px; padding: 12px 16px; margin-top: 20px; line-height: 1.5; }
+    .security-note { font-size: 12px; color: #64748B; margin-top: 24px; line-height: 1.5; border-top: 1px solid #F1F5F9; padding-top: 16px; }
     .footer { background: #F8FAFC; padding: 20px 24px; border-top: 1px solid #E2E8F0; text-align: center; font-size: 11px; color: #94A3B8; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>SISTEMA INSTITUCIONAL RDMI</h1>
-      <p>Gestión de Infraestructura y Mantenimiento Escolar</p>
+      <h1>RDMI</h1>
+      <p>Sistema Institucional de Mantenimiento</p>
     </div>
     <div class="body">
+      <h2 class="headline">Restablece tu contraseña</h2>
       <p class="message">
-        Hola, tu código de verificación para restablecer tu contraseña es: <strong>${code}</strong>. Este código vencerá en ${expiresInMinutes} minutos.
+        ${greeting}<br>
+        Has solicitado restablecer tu contraseña de acceso a la plataforma <strong>RDMI</strong>. Utiliza el siguiente código de verificación de 6 dígitos para completar el proceso:
       </p>
 
       <div class="code-box">
@@ -333,35 +388,21 @@ export async function sendVerificationCodeEmail(options: {
       </div>
 
       <div class="notice">
-        ⏱️ <strong>Importante:</strong> Por motivos de seguridad institucional, este código numérico de 6 dígitos es de un solo uso y caducará exactamente en ${expiresInMinutes} minutos.
+        ⏱️ <strong>Importante:</strong> Este código es de uso único y caducará exactamente en <strong>${expiresInMinutes} minutos</strong>.
       </div>
+
+      <p class="security-note">
+        Si tú no realizaste esta solicitud, puedes ignorar este mensaje con total seguridad. Tu contraseña actual no se modificará.
+      </p>
     </div>
     <div class="footer">
-      <p>Si usted no solicitó este código de verificación, ignore este correo con total tranquilidad.</p>
-      <p>&copy; ${new Date().getFullYear()} RDMI Institucional. Todos los derechos reservados.</p>
+      <p style="margin: 0 0 4px 0;"><strong>RDMI</strong> &bull; Gestión de Infraestructura y Mantenimiento</p>
+      <p style="margin: 0;">Mensaje enviado automáticamente mediante el servicio institucional de correo SMTP.</p>
     </div>
   </div>
 </body>
 </html>
   `.trim();
-
-  console.log(`\n======================================================`);
-  console.log(`📧 [SMTP GMAIL / VERIFICATION CODE DISPATCH]`);
-  console.log(`➡️ Para: ${toEmail}`);
-  console.log(`🔢 Código OTP: ${code}`);
-  console.log(`⏳ Validez: ${expiresInMinutes} minutos`);
-  console.log(`⚙️ Servidor SMTP: ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${process.env.SMTP_PORT || 465}`);
-  console.log(`👤 Usuario emisor: ${process.env.EMAIL_USER || 'No configurado en .env'}`);
-  console.log(`======================================================\n`);
-
-  if (!client) {
-    return {
-      success: true,
-      message: 'Código de verificación generado en el servidor.',
-      sentTo: toEmail,
-      smtpConfigured: false
-    };
-  }
 
   try {
     const info = await client.sendMail({
@@ -372,7 +413,7 @@ export async function sendVerificationCodeEmail(options: {
       html
     });
 
-    console.log(`✅ [NODEMAILER SUCCESS] Código de verificación entregado a ${toEmail}. MessageId: ${info.messageId}`);
+    console.log(`✅ [NODEMAILER SUCCESS] Código de verificación entregado exitosamente a ${toEmail}. MessageId: ${info.messageId}`);
     return {
       success: true,
       message: 'Código de verificación enviado exitosamente por correo electrónico.',
@@ -380,10 +421,19 @@ export async function sendVerificationCodeEmail(options: {
       smtpConfigured: true
     };
   } catch (err: any) {
-    console.error(`❌ [NODEMAILER ERROR] Error al despachar correo a ${toEmail}:`, err?.message || err);
+    console.error(`❌ [NODEMAILER ERROR REAL] Error al despachar correo a ${toEmail}:`, err);
+    let friendlyError = err?.message || 'Error de conexión con el servidor SMTP';
+
+    if (err?.code === 'EAUTH' || (err?.response && String(err.response).includes('535'))) {
+      friendlyError = 'Error de autenticación SMTP: Las credenciales de Gmail (EMAIL_USER / EMAIL_PASS) no son válidas. Asegúrese de generar una Contraseña de Aplicación de 16 dígitos en su cuenta de Google.';
+    } else if (err?.code === 'ESOCKET' || err?.code === 'ETIMEDOUT') {
+      friendlyError = 'Error de conexión SMTP: Tiempo de espera agotado al conectar con el servidor Gmail SMTP en puerto 465.';
+    }
+
     return {
-      success: true,
-      message: `Código generado en el servidor. Advertencia de servidor SMTP: ${err?.message || 'Error de envío'}.`,
+      success: false,
+      message: `Error al enviar correo por SMTP: ${friendlyError}`,
+      error: friendlyError,
       sentTo: toEmail,
       smtpConfigured: true
     };
@@ -398,26 +448,25 @@ export async function sendPasswordChangedEmail(options: {
   recipientName: string;
   recipientUsername: string;
 }): Promise<void> {
-  const client = getMailTransporter();
-  const fromAddress = process.env.EMAIL_USER
-    ? `"Seguridad Institucional" <${process.env.EMAIL_USER}>`
-    : '"Seguridad Institucional" <seguridad@institucion.edu.co>';
+  const { transporter: client } = getMailTransporter();
+  const user = (process.env.EMAIL_USER || DEFAULT_ADMIN_EMAIL).trim();
+  const fromAddress = `"RDMI" <${user}>`;
 
-  const subject = `[Confirmación de Seguridad] Su contraseña institucional ha sido actualizada`;
+  const subject = `[Confirmación de Seguridad] Su contraseña institucional ha sido actualizada | RDMI`;
   const html = `
   <div style="font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px; background: #fff;">
-    <h2 style="color: #2E0854; margin-top: 0;">Contraseña Actualizada Exitosamente</h2>
+    <h2 style="color: #1E1B4B; margin-top: 0;">RDMI - Contraseña Actualizada Exitosamente</h2>
     <p>Hola <strong>${options.recipientName}</strong>,</p>
-    <p>Le confirmamos que la contraseña para su usuario <strong>${options.recipientUsername}</strong> ha sido actualizada de forma segura mediante encriptación bcrypt.</p>
+    <p>Le confirmamos que la contraseña para su usuario <strong>${options.recipientUsername}</strong> ha sido actualizada de forma segura.</p>
     <p>Fecha y hora: <strong>${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}</strong></p>
     <p style="color: #64748B; font-size: 12px; margin-top: 24px; border-top: 1px solid #E2E8F0; padding-top: 12px;">
-      Si usted no realizó esta modificación, contacte inmediatamente a la dirección institucional.
+      Si usted no realizó esta modificación, contacte inmediatamente a la administración institucional de RDMI.
     </p>
   </div>
   `;
 
   if (!client) {
-    console.log(`📧 [CONFIRMATION EMAIL] Contraseña modificada para ${options.toEmail} (simulación de correo exitosa).`);
+    console.warn(`⚠️ [CONFIRMATION EMAIL] No se envió confirmación: credenciales SMTP no configuradas.`);
     return;
   }
 

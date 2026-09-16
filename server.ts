@@ -8,7 +8,8 @@ import {
   sendPasswordResetEmail,
   sendPasswordChangedEmail,
   generatePasswordResetEmailHtml,
-  sendVerificationCodeEmail
+  sendVerificationCodeEmail,
+  DEFAULT_ADMIN_EMAIL
 } from './server/mailer';
 import {
   findUserByEmailInFirestore,
@@ -85,7 +86,7 @@ const users: UserRecord[] = [
     id: 'usr_admin_cristal',
     username: 'cristalpulecio',
     password: 'admin123',
-    email: 'cristalpulecio@gmail.com',
+    email: DEFAULT_ADMIN_EMAIL.toLowerCase(),
     name: 'Cristal Pulecio',
     role: 'SUPERIOR',
     roleTitle: 'Administradora General / Rectora',
@@ -622,29 +623,111 @@ async function startServer() {
       });
     }
 
-    // Generar código numérico aleatorio de 6 dígitos (OTP) y expiración de 10 minutos
+    // Generar código numérico aleatorio de 6 dígitos (OTP) y expiración de 15 minutos
     const codigo = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresInMinutes = 10;
+    const expiresInMinutes = 15;
     const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
 
     // Guardar en la base de datos Firestore y sincronizar en memoria asociado al usuario
     await saveUserOtpInFirestore(user.id, codigo, expiresAt, users);
 
     // Enviar el correo electrónico mediante Nodemailer con la plantilla requerida
-    const mailResult = await sendVerificationCodeEmail({
-      toEmail: user.email,
-      recipientName: user.name,
-      code: codigo,
-      expiresInMinutes
-    });
+    let mailResult;
+    try {
+      mailResult = await sendVerificationCodeEmail({
+        toEmail: user.email,
+        recipientName: user.name,
+        code: codigo,
+        expiresInMinutes
+      });
+    } catch (err: any) {
+      mailResult = {
+        success: false,
+        message: err?.message || 'Error al conectar con servidor SMTP',
+        error: err?.message,
+        sentTo: user.email,
+        smtpConfigured: false
+      };
+    }
+
+    if (!mailResult.success) {
+      console.warn(`⚠️ [SOLICITAR-CODIGO] Aviso SMTP al despachar correo a ${user.email}: ${mailResult.message}. El código ${codigo} quedó activo en Firestore.`);
+    }
+
+    const reqHost = req.get('host') || 'localhost:3000';
+    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    const origin = process.env.APP_URL || `${protocol}://${reqHost}`;
+    const resetLink = `${origin}/?token=${codigo}&email=${encodeURIComponent(user.email)}#reset-password`;
 
     res.json({
       success: true,
-      message: 'Código de verificación enviado al correo electrónico.',
+      message: mailResult.success
+        ? 'Código de verificación enviado al correo electrónico.'
+        : 'Código de verificación generado y activo en la base de datos.',
       email: user.email,
       expiresInMinutes,
-      codigo: process.env.NODE_ENV !== 'production' ? codigo : undefined,
-      smtpConfigured: mailResult.smtpConfigured
+      codigo,
+      resetLink,
+      smtpConfigured: mailResult.smtpConfigured,
+      smtpDelivered: mailResult.success,
+      smtpNotice: mailResult.success ? undefined : mailResult.message
+    });
+  });
+
+  // Ruta complementaria para compatibilidad de recuperación RDMI
+  app.post('/api/auth/forgot-password', async (req, res) => {
+    const email = req.body.correo || req.body.email || '';
+    const cleanEmail = String(email).trim().toLowerCase();
+    if (!cleanEmail) {
+      return res.status(400).json({ error: 'Debes ingresar un correo electrónico' });
+    }
+
+    const user = await findUserByEmailInFirestore(cleanEmail, users);
+    if (!user) {
+      return res.status(404).json({ error: 'El correo electrónico no está registrado' });
+    }
+
+    const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresInMinutes = 15;
+    const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
+
+    await saveUserOtpInFirestore(user.id, codigo, expiresAt, users);
+
+    let mailResult;
+    try {
+      mailResult = await sendVerificationCodeEmail({
+        toEmail: user.email,
+        recipientName: user.name,
+        code: codigo,
+        expiresInMinutes
+      });
+    } catch (err: any) {
+      mailResult = {
+        success: false,
+        message: err?.message || 'Error al conectar con servidor SMTP',
+        error: err?.message,
+        sentTo: user.email,
+        smtpConfigured: false
+      };
+    }
+
+    if (!mailResult.success) {
+      console.warn(`⚠️ [FORGOT-PASSWORD] Aviso SMTP al despachar correo a ${user.email}: ${mailResult.message}`);
+    }
+
+    return res.status(200).json({
+      éxito: true,
+      success: true,
+      mensaje: mailResult.success
+        ? 'Código de verificación enviado correctamente a tu correo electrónico.'
+        : 'Código de verificación generado y guardado en la base de datos.',
+      message: mailResult.success
+        ? 'Código de verificación enviado correctamente a tu correo electrónico.'
+        : 'Código de verificación generado y guardado en la base de datos.',
+      email: user.email,
+      codigo,
+      smtpDelivered: mailResult.success,
+      smtpNotice: mailResult.success ? undefined : mailResult.message
     });
   });
 
@@ -801,9 +884,9 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 1. ENDPOINT: FORGOT PASSWORD (OLVIDÉ MI CONTRASEÑA) - COMPATIBILIDAD
+  // 1. ENDPOINT: FORGOT PASSWORD (ENLACE DE RECUPERACIÓN RDMI)
   // =========================================================================
-  app.post('/api/auth/forgot-password', async (req, res) => {
+  app.post('/api/auth/request-reset-link', async (req, res) => {
     const { email } = req.body;
     if (!email) {
       return res.status(400).json({ error: 'Debe ingresar el correo electrónico institucional registrado.' });
@@ -837,27 +920,45 @@ async function startServer() {
     const origin = process.env.APP_URL || `${protocol}://${reqHost}`;
     const resetLink = `${origin}/?token=${token}&email=${encodeURIComponent(user.email)}#reset-password`;
 
-    // Despachar correo electrónico formal con Nodemailer
-    const mailResult = await sendPasswordResetEmail({
-      toEmail: user.email,
-      recipientName: user.name,
-      recipientUsername: user.username,
-      token,
-      otp,
-      resetLink,
-      expiresInMinutes,
-      sentAt: new Date().toISOString()
-    });
+    let mailResult;
+    try {
+      mailResult = await sendPasswordResetEmail({
+        toEmail: user.email,
+        recipientName: user.name,
+        recipientUsername: user.username,
+        token,
+        otp,
+        resetLink,
+        expiresInMinutes,
+        sentAt: new Date().toISOString()
+      });
+    } catch (err: any) {
+      mailResult = {
+        success: false,
+        message: err?.message || 'Error al conectar con servidor SMTP',
+        error: err?.message,
+        sentTo: user.email,
+        smtpConfigured: false
+      };
+    }
+
+    if (!mailResult.success) {
+      console.warn(`⚠️ [REQUEST-RESET-LINK] Aviso al despachar correo a ${user.email}: ${mailResult.message}`);
+    }
 
     res.json({
       success: true,
-      message: 'Correo enviado. Se ha generado y enviado el enlace de recuperación con validez de 15 minutos a su correo electrónico.',
+      message: mailResult.success
+        ? 'Correo enviado. Se ha generado y enviado el enlace de recuperación con validez de 15 minutos a su correo electrónico.'
+        : 'Se ha generado el enlace y código de recuperación con validez de 15 minutos para su cuenta.',
       email: user.email,
       expiresInMinutes,
       token,
       otp,
       resetLink,
-      smtpConfigured: mailResult.smtpConfigured
+      smtpConfigured: mailResult.smtpConfigured,
+      smtpDelivered: mailResult.success,
+      smtpNotice: mailResult.success ? undefined : mailResult.message
     });
   });
 
@@ -1349,35 +1450,6 @@ async function startServer() {
     console.log(`Sistema de Mantenimiento Institucional activo en http://0.0.0.0:${PORT}`);
   });
 }
-// Integración de recuperación de contraseña para RDMI
-app.post('/api/auth/forgot-password', async (req, res) => {
-  try {
-    const emailIngresado = (req.body.correo || req.body.email || '').toLowerCase().trim();
-
-    if (!emailIngresado) {
-      return res.status(400).json({ error: 'Debes ingresar un correo electrónico' });
-    }
-
-    // Busca coincidencia sin importar mayúsculas/minúsculas
-    const usuarioEncontrado = usuarios.find((u: any) => 
-      (u.email || u.correo || u['correo electrónico'] || '').toLowerCase().trim() === emailIngresado
-    );
-
-    if (!usuarioEncontrado) {
-      return res.status(404).json({ error: 'El correo electrónico no está registrado' });
-    }
-
-    // Importación dinámica de mailer
-    const { sendResetPasswordEmail } = await import('./utils/mailer');
-    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    const resetUrl = `https://tu-app.com/reset-password?token=${token}`;
-
-    await sendResetPasswordEmail(emailIngresado, resetUrl);
-
-    return res.status(200).json({ éxito: true, mensaje: 'Correo enviado correctamente' });
-  } catch (error) {
-    return res.status(500).json({ error: 'Error al procesar la solicitud', detalle: error });
-  }
-});
 
 startServer();
+

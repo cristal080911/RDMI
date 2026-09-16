@@ -23,9 +23,14 @@ import {
   EyeOff,
   ChevronRight,
   AlertCircle,
+  ExternalLink,
+  RefreshCw,
+  Copy,
+  Check,
   X
 } from 'lucide-react';
 import { UserRole, User as UserEntity } from '../core/domain/entities';
+import { ApiClient } from '../adapters/api/apiClient';
 
 interface LoginViewProps {
   onLogin: (username: string, password: string, adminCode?: string) => Promise<UserEntity>;
@@ -52,7 +57,23 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onOpenPasswordRecovery,
   onOpenHelpModal
 }) => {
-  const [tab, setTab] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
+  const [tab, setTab] = useState<'LOGIN' | 'REGISTER' | 'RECOVER'>('LOGIN');
+
+  // Recovery Form State (Mandar correo para cambiar contraseña)
+  const [recoverEmail, setRecoverEmail] = useState('');
+  const [recoverStep, setRecoverStep] = useState<1 | 2>(1);
+  const [recoverOtpCode, setRecoverOtpCode] = useState('');
+  const [recoverNewPassword, setRecoverNewPassword] = useState('');
+  const [recoverConfirmPassword, setRecoverConfirmPassword] = useState('');
+  const [recoverShowNewPassword, setRecoverShowNewPassword] = useState(false);
+  const [recoverIsSending, setRecoverIsSending] = useState(false);
+  const [recoverIsSaving, setRecoverIsSaving] = useState(false);
+  const [recoverSuccessMessage, setRecoverSuccessMessage] = useState<string | null>(null);
+  const [recoverDevOtp, setRecoverDevOtp] = useState<string | null>(null);
+  const [recoverResetLink, setRecoverResetLink] = useState<string | null>(null);
+  const [recoverSmtpDelivered, setRecoverSmtpDelivered] = useState<boolean | null>(null);
+  const [recoverSmtpNotice, setRecoverSmtpNotice] = useState<string | null>(null);
+  const [recoverCopied, setRecoverCopied] = useState(false);
 
   // Login Form State
   const [loginUsername, setLoginUsername] = useState('');
@@ -285,6 +306,82 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
   };
 
+  // Enviar correo de recuperación desde la pestaña "3. Mandar Correo"
+  const handleRecoverSendEmail = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setError(null);
+    setRecoverSuccessMessage(null);
+    const targetEmail = recoverEmail.trim() || loginUsername.trim();
+    if (!targetEmail) {
+      setError('Por favor ingresa tu correo electrónico registrado o nombre de usuario.');
+      return;
+    }
+
+    setRecoverIsSending(true);
+    try {
+      const resp = await ApiClient.solicitarCodigo(targetEmail);
+      if (resp.email) setRecoverEmail(resp.email);
+      setRecoverDevOtp(resp.codigo || null);
+      setRecoverResetLink(resp.resetLink || null);
+      setRecoverSmtpDelivered(resp.smtpDelivered === true);
+      setRecoverSmtpNotice(resp.smtpNotice || null);
+      setRecoverStep(2);
+      setRecoverSuccessMessage(resp.message || 'Código generado y enviado al correo.');
+    } catch (err: any) {
+      setError(err?.message || 'Error al enviar la solicitud de recuperación.');
+    } finally {
+      setRecoverIsSending(false);
+    }
+  };
+
+  // Guardar nueva contraseña con el código de 6 dígitos recibido por correo
+  const handleRecoverSavePassword = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setError(null);
+    const cleanCode = recoverOtpCode.trim();
+    if (!cleanCode) {
+      setError('Por favor ingresa el código numérico de 6 dígitos que recibiste.');
+      return;
+    }
+    if (!recoverNewPassword) {
+      setError('Por favor ingresa tu nueva contraseña.');
+      return;
+    }
+    if (recoverNewPassword.length < 4 || recoverNewPassword.length > 20) {
+      setError('La contraseña debe tener entre 4 y 20 caracteres.');
+      return;
+    }
+    if (recoverNewPassword !== recoverConfirmPassword) {
+      setError('Las contraseñas no coinciden. Verifica que ambas sean iguales.');
+      return;
+    }
+
+    setRecoverIsSaving(true);
+    try {
+      const resp = await ApiClient.cambiarClave({
+        email: recoverEmail.trim().toLowerCase(),
+        codigo: cleanCode,
+        nuevaContrasena: recoverNewPassword,
+        confirmarContrasena: recoverConfirmPassword
+      });
+
+      setRecoverSuccessMessage(resp.message || '¡Contraseña actualizada con éxito!');
+      // Cambiar a la pestaña de login y rellenar credenciales
+      setLoginUsername(recoverEmail);
+      setLoginPassword(recoverNewPassword);
+      setRecoverStep(1);
+      setRecoverOtpCode('');
+      setRecoverNewPassword('');
+      setRecoverConfirmPassword('');
+      setRecoverDevOtp(null);
+      setTab('LOGIN');
+    } catch (err: any) {
+      setError(err?.message || 'Error al actualizar la contraseña. Revisa el código.');
+    } finally {
+      setRecoverIsSaving(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-[#131131] to-[#2e0854] text-slate-100 flex flex-col justify-between selection:bg-purple-500 selection:text-white p-3 sm:p-6">
       
@@ -368,31 +465,50 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </div>
           )}
 
-          {/* Tab Navigation: Iniciar Sesión / Registrarse */}
-          <div className="grid grid-cols-2 p-2 bg-[#F2ECE0] border-b border-[#E3DCBD] gap-1.5">
+          {/* Tab Navigation: Iniciar Sesión / Registrarse / Cambiar por Correo */}
+          <div className="grid grid-cols-3 p-2 bg-[#F2ECE0] border-b border-[#E3DCBD] gap-1.5">
             <button
               type="button"
               onClick={() => { setTab('LOGIN'); setError(null); }}
-              className={`py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              className={`py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 tab === 'LOGIN'
                   ? 'bg-[#FDFBF7] text-purple-950 shadow-md border border-[#DDD5C2]'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
               }`}
             >
-              <KeyRound className="w-4 h-4 text-purple-800" />
-              <span>1. Iniciar Sesión</span>
+              <KeyRound className="w-4 h-4 text-purple-800 shrink-0" />
+              <span className="truncate">1. Iniciar Sesión</span>
             </button>
             <button
               type="button"
               onClick={() => { setTab('REGISTER'); setError(null); }}
-              className={`py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              className={`py-2.5 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 tab === 'REGISTER'
                   ? 'bg-[#FDFBF7] text-purple-950 shadow-md border border-[#DDD5C2]'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
               }`}
             >
-              <UserPlus className="w-4 h-4 text-emerald-700" />
-              <span>2. Registrarse</span>
+              <UserPlus className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span className="truncate">2. Registrarse</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTab('RECOVER');
+                setError(null);
+                if (loginUsername && !recoverEmail) {
+                  setRecoverEmail(loginUsername);
+                }
+              }}
+              className={`py-2.5 px-1.5 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                tab === 'RECOVER'
+                  ? 'bg-[#FDFBF7] text-purple-950 shadow-md border border-purple-400 ring-2 ring-purple-600/30'
+                  : 'text-purple-950 hover:bg-purple-100/80 bg-purple-50/70 border border-purple-200/90 hover:shadow-xs'
+              }`}
+              title="Mandar correo para cambiar contraseña"
+            >
+              <Mail className="w-4 h-4 text-purple-700 shrink-0" />
+              <span className="truncate">3. Mandar Correo</span>
             </button>
           </div>
 
@@ -400,11 +516,30 @@ export const LoginView: React.FC<LoginViewProps> = ({
             
             {/* Error Message */}
             {error && (
-              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm font-bold flex items-start gap-2.5 shadow-sm">
-                <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <p className="leading-snug">{error}</p>
+              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm font-bold space-y-2 shadow-sm">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="leading-snug">{error}</p>
+                  </div>
                 </div>
+                {tab === 'LOGIN' && (
+                  <div className="pt-2 border-t border-rose-200/80 flex items-center justify-between text-xs">
+                    <span className="text-rose-800 font-normal">¿No recuerdas tu contraseña?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTab('RECOVER');
+                        if (loginUsername && !recoverEmail) setRecoverEmail(loginUsername);
+                        setError(null);
+                      }}
+                      className="font-black text-purple-950 hover:text-purple-800 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Mail className="w-3.5 h-3.5 text-purple-800" />
+                      <span>Mandar correo para cambiarla</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -510,18 +645,62 @@ export const LoginView: React.FC<LoginViewProps> = ({
                       )}
                     </button>
                   </div>
-                  {onOpenPasswordRecovery && (
-                    <div className="flex justify-end mt-1.5">
-                      <button
-                        type="button"
-                        onClick={() => onOpenPasswordRecovery(loginUsername)}
-                        className="text-[11px] font-bold text-purple-900 hover:text-purple-700 hover:underline flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <KeyRound className="w-3 h-3 text-purple-700" />
-                        <span>¿Olvidó su contraseña? Recuperar / Cambiar</span>
-                      </button>
+                  <div className="flex items-center justify-between mt-1.5">
+                    <span className="text-[11px] text-slate-500">¿Problemas para acceder?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTab('RECOVER');
+                        if (loginUsername && !recoverEmail) setRecoverEmail(loginUsername);
+                        setError(null);
+                      }}
+                      className="text-[11px] font-bold text-purple-900 hover:text-purple-700 hover:underline flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Mail className="w-3.5 h-3.5 text-purple-700" />
+                      <span>Mandar correo para cambiar contraseña</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tarjeta Destacada: Cambiar contraseña por medio de un mensaje por correo */}
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-50 via-indigo-50/70 to-purple-50 border border-purple-200/90 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-800 to-indigo-700 text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+                      <Mail className="w-4 h-4" />
                     </div>
-                  )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-black text-purple-950">
+                        ¿Olvidaste tu contraseña o necesitas cambiarla?
+                      </p>
+                      <p className="text-[11px] text-purple-900/80 mt-0.5 leading-relaxed">
+                        Recibe un mensaje con el código numérico de 6 dígitos y enlace en tu correo para restablecerla de forma inmediata.
+                      </p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTab('RECOVER');
+                            if (loginUsername && !recoverEmail) setRecoverEmail(loginUsername);
+                            setError(null);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-800 hover:bg-purple-900 text-white text-xs font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer"
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          <span>Mandar correo para cambiar contraseña</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                        {onOpenPasswordRecovery && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenPasswordRecovery(loginUsername)}
+                            className="text-[11px] text-purple-900 hover:underline font-semibold cursor-pointer"
+                          >
+                            Ventana emergente
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <button
@@ -709,7 +888,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </div>
 
               </form>
-            ) : (
+            ) : tab === 'REGISTER' ? (
               /* --- FORMULARIO DE REGISTRO INSTITUCIONAL --- */
               <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
                 
@@ -939,6 +1118,316 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </div>
 
               </form>
+            ) : (
+              /* --- FORMULARIO DIRECTO: MANDAR CORREO PARA CAMBIAR CONTRASEÑA --- */
+              <div className="space-y-4 animate-in fade-in duration-200">
+                
+                {/* Encabezado explicativo */}
+                <div className="p-3.5 bg-gradient-to-r from-purple-100 via-indigo-50 to-purple-50 rounded-2xl border border-purple-200/90 text-purple-950 flex items-start gap-3 shadow-xs">
+                  <div className="w-9 h-9 rounded-xl bg-purple-900 text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+                    <Mail className="w-5 h-5 text-purple-200" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-black text-purple-950 flex items-center gap-1.5">
+                      <span>Mandar correo para cambiar contraseña</span>
+                    </h3>
+                    <p className="text-xs text-purple-900/85 mt-0.5 leading-relaxed">
+                      {recoverStep === 1 
+                        ? 'Ingresa tu correo institucional o nombre de usuario registrado. Te enviaremos un mensaje con el código numérico de 6 dígitos con validez de 15 minutos.'
+                        : 'Ingresa el código que recibiste por correo y escribe tu nueva contraseña.'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Mensaje de éxito si lo hay */}
+                {recoverSuccessMessage && (
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span>{recoverSuccessMessage}</span>
+                  </div>
+                )}
+
+                {/* PASO 1: Ingreso de correo y botón para mandar correo */}
+                {recoverStep === 1 && (
+                  <form onSubmit={handleRecoverSendEmail} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-1.5">
+                        Correo Electrónico o Usuario Registrado *
+                      </label>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          required
+                          autoFocus
+                          value={recoverEmail}
+                          onChange={(e) => {
+                            setRecoverEmail(e.target.value);
+                            setError(null);
+                          }}
+                          onBlur={(e) => {
+                            setRecoverEmail(e.target.value.trim().toLowerCase());
+                          }}
+                          placeholder="ej: cristalpulecio@gmail.com o tu usuario"
+                          className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm placeholder:text-slate-400"
+                        />
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Se enviará un código de verificación seguro a la bandeja del correo registrado.
+                      </p>
+                    </div>
+
+                    {/* Botón Principal para mandar el correo */}
+                    <button
+                      type="submit"
+                      disabled={recoverIsSending}
+                      id="btn-mandar-correo-login"
+                      className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-purple-800 via-indigo-800 to-purple-900 hover:from-purple-700 hover:to-indigo-700 text-white text-sm font-black shadow-lg shadow-purple-950/40 transition-all transform hover:-translate-y-0.5 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none"
+                    >
+                      {recoverIsSending ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Despachando correo y registrando en base de datos...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Mail className="w-4 h-4" />
+                          <span>Mandar correo para cambiar contraseña</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+
+                    {/* Accesos Rápidos: Cuentas para prueba inmediata */}
+                    <div className="p-3 bg-purple-50/60 rounded-xl border border-purple-200/60 text-xs">
+                      <p className="text-[11px] font-bold text-purple-950 mb-1.5 flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5 text-purple-700" />
+                        <span>Correos rápidos registrados en el sistema:</span>
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {['cristalpulecio@gmail.com', 'nicoleespinosa464@gmail.com', 'rectoria'].map((correo) => (
+                          <button
+                            key={correo}
+                            type="button"
+                            onClick={() => {
+                              setRecoverEmail(correo);
+                              setError(null);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-purple-200 text-[11px] font-semibold text-purple-900 hover:bg-purple-100 hover:border-purple-300 transition-colors cursor-pointer"
+                          >
+                            {correo}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Botones secundarios */}
+                    <div className="flex items-center justify-between pt-2 text-xs">
+                      {onOpenPasswordRecovery && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenPasswordRecovery(recoverEmail || loginUsername)}
+                          className="font-bold text-purple-900 hover:text-purple-700 hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Abrir ventana completa</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { setTab('LOGIN'); setError(null); }}
+                        className="font-bold text-slate-600 hover:text-slate-900 cursor-pointer ml-auto"
+                      >
+                        ← Volver a Iniciar Sesión
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* PASO 2: Ingresar código y nueva contraseña */}
+                {recoverStep === 2 && (
+                  <form onSubmit={handleRecoverSavePassword} className="space-y-4">
+                    
+                    {/* Tarjeta de estado de entrega de correo */}
+                    {recoverSmtpDelivered ? (
+                      <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-emerald-700 shrink-0" />
+                        <div>
+                          <p className="font-bold text-emerald-900">¡Correo enviado con éxito!</p>
+                          <p className="text-[11px] text-emerald-800">Revisa la bandeja de entrada o spam de <strong>{recoverEmail}</strong>.</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 text-xs space-y-2 shadow-xs">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-bold text-amber-950">Aviso del servidor de correo Gmail</p>
+                            <p className="text-[11px] text-amber-900 leading-relaxed">
+                              Google requiere una contraseña de aplicación de 16 caracteres para enviar correos directamente por SMTP. ¡Sin embargo, el código está activo y puedes mandar el correo con 1 clic!
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Botones para mandar el correo en 1 clic */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                          <a
+                            href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recoverEmail)}&su=${encodeURIComponent('Código de Recuperación RDMI: ' + (recoverDevOtp || ''))}&body=${encodeURIComponent('Tu código de recuperación de contraseña para el Sistema RDMI es: ' + (recoverDevOtp || '') + '\n\nTiene una validez de 15 minutos.')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 rounded-xl bg-white border border-amber-300 text-amber-950 hover:bg-amber-100/60 font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-xs transition-colors"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 text-amber-700" />
+                            <span>Mandar correo en Gmail Web</span>
+                          </a>
+
+                          <a
+                            href={`mailto:${recoverEmail}?subject=${encodeURIComponent('Código de Recuperación RDMI')}&body=${encodeURIComponent('Tu código de recuperación de contraseña es: ' + (recoverDevOtp || '') + ' (válido por 15 minutos).')}`}
+                            className="p-2 rounded-xl bg-white border border-amber-300 text-amber-950 hover:bg-amber-100/60 font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-xs transition-colors"
+                          >
+                            <Mail className="w-3.5 h-3.5 text-amber-700" />
+                            <span>Abrir en mi app de correo</span>
+                          </a>
+                        </div>
+
+                        {/* Mostrar código activo con botón de pegar */}
+                        {recoverDevOtp && (
+                          <div className="p-2 bg-purple-100/80 rounded-xl border border-purple-300 flex items-center justify-between text-purple-950">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-purple-800">Código activo en BD:</span>
+                              <p className="font-mono text-base font-black tracking-widest text-purple-950">{recoverDevOtp}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRecoverOtpCode(recoverDevOtp);
+                                setRecoverCopied(true);
+                                setTimeout(() => setRecoverCopied(false), 2500);
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-purple-800 hover:bg-purple-900 text-white font-bold text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                            >
+                              {recoverCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{recoverCopied ? 'Pegado!' : 'Pegar código'}</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Campo: Código de 6 dígitos */}
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-1.5">
+                        Código de Verificación (6 dígitos) *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={6}
+                        value={recoverOtpCode}
+                        onChange={(e) => setRecoverOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="Ej: 123456"
+                        className="w-full px-4 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-center font-mono text-lg tracking-widest font-black text-purple-950 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm"
+                      />
+                    </div>
+
+                    {/* Campo: Nueva Contraseña */}
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-1.5">
+                        Nueva Contraseña (4 a 20 caracteres) *
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={recoverShowNewPassword ? 'text' : 'password'}
+                          required
+                          maxLength={20}
+                          value={recoverNewPassword}
+                          onChange={(e) => setRecoverNewPassword(e.target.value.slice(0, 20))}
+                          placeholder="Ingresa tu nueva contraseña"
+                          className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm placeholder:text-slate-400"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setRecoverShowNewPassword(!recoverShowNewPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-purple-900"
+                        >
+                          {recoverShowNewPassword ? <EyeOff className="w-4 h-4 text-purple-800" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Campo: Confirmar Contraseña */}
+                    <div>
+                      <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-1.5">
+                        Confirmar Nueva Contraseña *
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-purple-900 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={recoverShowNewPassword ? 'text' : 'password'}
+                          required
+                          maxLength={20}
+                          value={recoverConfirmPassword}
+                          onChange={(e) => setRecoverConfirmPassword(e.target.value.slice(0, 20))}
+                          placeholder="Repite tu nueva contraseña"
+                          className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-white border border-[#DDD5C2] text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-purple-700 focus:outline-none shadow-sm placeholder:text-slate-400"
+                        />
+                      </div>
+                      {recoverNewPassword && recoverConfirmPassword && (
+                        <p className={`text-[11px] mt-1 font-bold ${recoverNewPassword === recoverConfirmPassword ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {recoverNewPassword === recoverConfirmPassword ? '✓ Las contraseñas coinciden' : '⚠️ Las contraseñas no coinciden'}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Botón de Guardar Contraseña */}
+                    <button
+                      type="submit"
+                      disabled={recoverIsSaving}
+                      className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-purple-800 via-indigo-800 to-purple-900 hover:from-purple-700 hover:to-indigo-700 text-white text-sm font-black shadow-lg shadow-purple-950/40 transition-all transform hover:-translate-y-0.5 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {recoverIsSaving ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Guardando nueva contraseña con encriptación segura...</span>
+                        </>
+                      ) : (
+                        <>
+                          <KeyRound className="w-4 h-4" />
+                          <span>Guardar y Cambiar Contraseña</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+
+                    {/* Botones para regresar */}
+                    <div className="flex items-center justify-between pt-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecoverStep(1);
+                          setError(null);
+                        }}
+                        className="text-purple-900 hover:text-purple-700 font-bold underline cursor-pointer"
+                      >
+                        ← Solicitar otro código / correo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTab('LOGIN');
+                          setError(null);
+                        }}
+                        className="text-slate-600 hover:text-slate-900 font-bold cursor-pointer"
+                      >
+                        Volver al inicio
+                      </button>
+                    </div>
+
+                  </form>
+                )}
+
+              </div>
             )}
 
           </div>

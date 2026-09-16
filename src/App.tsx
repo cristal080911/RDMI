@@ -346,8 +346,11 @@ export default function App() {
           onRegister={handleRegister}
           onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
           onOpenHelpModal={() => setIsHelpModalOpen(true)}
-          onOpenPasswordRecovery={() => {
+          onOpenPasswordRecovery={(prefilled) => {
             setPasswordModalMode('FORGOT');
+            if (prefilled) {
+              setResetEmailFromUrl(prefilled.trim());
+            }
             setIsPasswordModalOpen(true);
           }}
         />
@@ -364,8 +367,9 @@ export default function App() {
           initialEmail={resetEmailFromUrl}
           currentUser={currentUser}
           onPasswordChangedSuccessfully={() => {
-            setSyncFeedback('Contraseña restablecida de forma segura. Inicie sesión para continuar.');
-            setTimeout(() => setSyncFeedback(null), 6000);
+            setSyncFeedback('Contraseña actualizada con éxito por medio del correo. Ahora puedes iniciar sesión.');
+            setTimeout(() => setSyncFeedback(null), 7000);
+            setIsPasswordModalOpen(false);
           }}
         />
         <HexagonalArchitectureModal
@@ -644,8 +648,8 @@ export default function App() {
         onOpenPasswordRecovery={(prefilled) => {
           setIsAuthModalOpen(false);
           setPasswordModalMode('FORGOT');
-          if (prefilled && prefilled.includes('@')) {
-            setResetEmailFromUrl(prefilled);
+          if (prefilled) {
+            setResetEmailFromUrl(prefilled.trim());
           }
           setIsPasswordModalOpen(true);
         }}
@@ -660,14 +664,21 @@ export default function App() {
           if (window.location.search.includes('token=') || window.location.hash === '#reset-password') {
             window.history.replaceState({}, document.title, window.location.pathname);
           }
+          if (!currentUser) {
+            setIsAuthModalOpen(true);
+          }
         }}
         mode={passwordModalMode}
         initialToken={resetTokenFromUrl}
         initialEmail={resetEmailFromUrl}
         currentUser={currentUser}
         onPasswordChangedSuccessfully={() => {
-          setSyncFeedback('Contraseña restablecida de forma segura. Inicie sesión para continuar.');
-          setTimeout(() => setSyncFeedback(null), 6000);
+          setSyncFeedback('Contraseña actualizada con éxito por medio del correo. Inicie sesión con su nueva clave.');
+          setTimeout(() => setSyncFeedback(null), 7000);
+          setIsPasswordModalOpen(false);
+          if (!currentUser) {
+            setIsAuthModalOpen(true);
+          }
         }}
       />
 

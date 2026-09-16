@@ -86,17 +86,20 @@ export async function findUserByEmailInFirestore(
 
       for (const docSnap of snap.docs) {
         const data = docSnap.data();
-        // Verificar campos de correo posibles con comparación flexible insensible a mayúsculas/minúsculas
+        // Verificar campos de correo y usuario posibles con comparación flexible insensible a mayúsculas/minúsculas
         const candidateEmail = String(
           data.email || data.correo_electronico || data.correo || ''
         ).trim().toLowerCase();
+        const candidateUsername = String(
+          data.username || data.usuario || ''
+        ).trim().toLowerCase();
 
-        if (candidateEmail === cleanTarget) {
+        if (candidateEmail === cleanTarget || (candidateUsername && candidateUsername === cleanTarget)) {
           return {
             id: docSnap.id,
-            email: candidateEmail,
+            email: candidateEmail || String(data.email || '').trim().toLowerCase(),
             name: data.name || data.nombre || 'Usuario Institucional',
-            username: data.username || data.usuario || '',
+            username: candidateUsername || data.username || '',
             role: data.role || data.rol || 'DOCENTE',
             roleTitle: data.roleTitle || data.cargo || '',
             department: data.department || data.departamento || '',
@@ -116,7 +119,8 @@ export async function findUserByEmailInFirestore(
   // Fallback en memoria si la base de datos externa no responde o el usuario es una semilla local
   const foundMem = memoryUsersFallback.find(u => {
     const memEmail = String(u.email || u.correo_electronico || u.correo || '').trim().toLowerCase();
-    return memEmail === cleanTarget;
+    const memUser = String(u.username || u.usuario || '').trim().toLowerCase();
+    return memEmail === cleanTarget || (memUser && memUser === cleanTarget);
   });
 
   if (foundMem) {

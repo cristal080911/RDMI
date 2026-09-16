@@ -264,8 +264,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <span>Acceso exclusivo institucional. Prohibido el ingreso a estudiantes.</span>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="grid grid-cols-2 p-2 bg-[#F2ECE0] border-b border-[#E3DCBD] gap-1">
+        {/* Tab Switcher: Iniciar Sesión / Registrar Personal / Cambiar por Correo */}
+        <div className="grid grid-cols-3 p-2 bg-[#F2ECE0] border-b border-[#E3DCBD] gap-1">
           <button
             onClick={() => { setTab('LOGIN'); setError(null); setSuccessMessage(null); }}
             className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
@@ -286,14 +286,45 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           >
             Registrar Personal
           </button>
+          {onOpenPasswordRecovery && (
+            <button
+              onClick={() => {
+                onClose();
+                onOpenPasswordRecovery(loginUsername);
+              }}
+              className="py-2 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer text-purple-900 hover:bg-purple-100/80 bg-purple-50/60 border border-purple-200/70 flex items-center justify-center gap-1"
+              title="Cambiar contraseña por medio de un mensaje por correo"
+            >
+              <Mail className="w-3.5 h-3.5 text-purple-700 shrink-0" />
+              <span className="truncate">Por Correo</span>
+            </button>
+          )}
         </div>
 
         <div className="p-5 space-y-4">
           
           {error && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <span>{error}</span>
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+              {onOpenPasswordRecovery && tab === 'LOGIN' && (
+                <div className="pt-1.5 border-t border-rose-200/70 flex items-center justify-between text-[11px]">
+                  <span className="text-rose-700 font-normal">¿No recuerdas tu contraseña?</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenPasswordRecovery(loginUsername);
+                    }}
+                    className="font-bold text-purple-900 hover:text-purple-700 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Mail className="w-3 h-3 text-purple-700" />
+                    <span>Cambiarla por correo</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -368,7 +399,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   />
                 </div>
                 {onOpenPasswordRecovery && (
-                  <div className="flex justify-end mt-1">
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[11px] text-slate-500">¿Problemas para acceder?</span>
                     <button
                       type="button"
                       onClick={() => {
@@ -377,12 +409,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       }}
                       className="text-[11px] font-bold text-purple-900 hover:text-purple-700 hover:underline flex items-center gap-1 cursor-pointer transition-colors"
                     >
-                      <KeyRound className="w-3 h-3 text-purple-700" />
-                      <span>¿Olvidó su contraseña? Recuperar</span>
+                      <Mail className="w-3 h-3 text-purple-700" />
+                      <span>Cambiar contraseña por correo</span>
                     </button>
                   </div>
                 )}
               </div>
+
+              {/* Tarjeta destacada para cambiar contraseña por mensaje por correo */}
+              {onOpenPasswordRecovery && (
+                <div className="p-3 rounded-2xl bg-gradient-to-r from-purple-50 via-indigo-50/70 to-purple-50 border border-purple-200/90 shadow-xs">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-purple-700 text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+                      <Mail className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-purple-950">
+                        ¿Olvidaste tu contraseña o necesitas cambiarla?
+                      </p>
+                      <p className="text-[11px] text-purple-900/80 mt-0.5 leading-relaxed">
+                        Recibe un código numérico o enlace a tu correo institucional para crear una nueva clave.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onOpenPasswordRecovery(loginUsername);
+                        }}
+                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-800 hover:bg-purple-900 text-white text-xs font-bold shadow-xs hover:shadow-sm transition-all cursor-pointer"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>Cambiar contraseña por correo</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <button
                 type="submit"

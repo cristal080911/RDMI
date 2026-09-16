@@ -13,7 +13,9 @@ import {
   RefreshCw,
   Send,
   Clock,
-  ArrowLeft
+  ArrowLeft,
+  ExternalLink,
+  AlertTriangle
 } from 'lucide-react';
 import { User as UserEntity } from '../core/domain/entities';
 import { ApiClient } from '../adapters/api/apiClient';
@@ -52,7 +54,7 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
   // --- PANTALLA 2: CÓDIGO DE 6 DÍGITOS ---
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
-  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(600); // 10 minutos
+  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(900); // 15 minutos
   const [isCodeExpired, setIsCodeExpired] = useState(false);
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -70,12 +72,18 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
   // Alertas y Mensajes
   const [error, setError] = useState<string | null>(null);
   const [successInfo, setSuccessInfo] = useState<string | null>(null);
+  const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
+  const [smtpNotice, setSmtpNotice] = useState<string | null>(null);
+  const [smtpDelivered, setSmtpDelivered] = useState<boolean | null>(null);
 
   // Sincronizar estado cuando se abre la ventana
   useEffect(() => {
     if (isOpen) {
       setError(null);
       setSuccessInfo(null);
+      setDevOtpCode(null);
+      setSmtpNotice(null);
+      setSmtpDelivered(null);
       setIsSendingCode(false);
       setIsVerifyingCode(false);
       setIsSavingPassword(false);
@@ -102,11 +110,11 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
     }
   }, [isOpen, mode, initialToken, initialEmail, currentUser]);
 
-  // Temporizador regresivo para la validez del código (10 minutos)
+  // Temporizador regresivo para la validez del código (15 minutos)
   useEffect(() => {
     let timer: any = null;
     if (isOpen && step === 2) {
-      setTimeRemainingSeconds(600); // 10 minutos = 600 segundos
+      setTimeRemainingSeconds(900); // 15 minutos = 900 segundos
       setIsCodeExpired(false);
 
       timer = setInterval(() => {
@@ -157,9 +165,14 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
       return;
     }
 
-    // Validación básica de sintaxis de correo
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      setError('Por favor ingresa un correo electrónico válido (ejemplo: usuario@gmail.com).');
+    // Validación básica: si tiene '@', debe ser formato correo válido; si no tiene '@', se toma como nombre de usuario institucional
+    if (cleanEmail.includes('@')) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        setError('Por favor ingresa un correo electrónico válido (ejemplo: usuario@institucion.edu.co).');
+        return;
+      }
+    } else if (cleanEmail.length < 3) {
+      setError('Por favor ingresa tu correo institucional o nombre de usuario (mínimo 3 caracteres).');
       return;
     }
 
@@ -167,11 +180,18 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
 
     try {
       const response = await ApiClient.solicitarCodigo(cleanEmail);
-      setSuccessInfo(response.message || 'Código enviado al correo electrónico.');
-
-      // Si se devolvió en modo desarrollo, podemos prellenar o registrar
-      if (response.codigo && process.env.NODE_ENV !== 'production') {
-        console.log(`[DEV MODE] Código de verificación recibido: ${response.codigo}`);
+      if (response.email) {
+        setEmailInput(response.email);
+      }
+      setSuccessInfo(response.message || 'Código generado.');
+      if (response.codigo) {
+        setDevOtpCode(response.codigo);
+      }
+      setSmtpDelivered((response as any).smtpDelivered ?? null);
+      if ((response as any).smtpNotice) {
+        setSmtpNotice((response as any).smtpNotice);
+      } else {
+        setSmtpNotice(null);
       }
 
       // Avanzar a Pantalla 2 (Ingreso de código de 6 dígitos)
@@ -271,12 +291,7 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
       // Código válido: avanzar a Pantalla 3 (Definir nueva contraseña)
       setStep(3);
     } catch (err: any) {
-      const msg = err?.message || '';
-      if (msg.includes('expirado') || msg.includes('vencido')) {
-        setError('El código de verificación ha expirado');
-      } else {
-        setError('El código ingresado es incorrecto');
-      }
+      setError(err?.message || 'El código ingresado es incorrecto o ha expirado.');
     } finally {
       setIsVerifyingCode(false);
     }
@@ -492,16 +507,16 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
             <form onSubmit={handleSolicitarCodigo} className="space-y-5">
               <div>
                 <p className="text-sm text-slate-600 mb-4 leading-relaxed">
-                  Ingresa el correo electrónico registrado con el que creaste tu cuenta. Te enviaremos un código numérico aleatorio de 6 dígitos que tendrá una validez de 10 minutos.
+                  Ingresa tu correo electrónico registrado o nombre de usuario institucional. Te enviaremos un mensaje con un código numérico aleatorio de 6 dígitos que tendrá una validez de 15 minutos para que puedas cambiar tu contraseña.
                 </p>
 
                 <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-2">
-                  Correo Electrónico Registrado
+                  Correo Electrónico o Usuario Institucional
                 </label>
                 <div className="relative">
                   <Mail className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="email"
+                    type="text"
                     required
                     autoFocus
                     value={emailInput}
@@ -512,7 +527,7 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
                     onBlur={(e) => {
                       setEmailInput(e.target.value.trim().toLowerCase());
                     }}
-                    placeholder="ejemplo: funcionario@gmail.com"
+                    placeholder="ej: funcionario@institucion.edu.co o tu usuario"
                     className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-purple-600 transition-all font-medium placeholder:text-slate-400 shadow-sm"
                   />
                 </div>
@@ -560,11 +575,97 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
               <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 text-xs text-indigo-900 flex items-start gap-3">
                 <Mail className="w-4 h-4 text-indigo-700 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-bold text-indigo-950">Código enviado a tu correo:</p>
+                  <p className="font-bold text-indigo-950">
+                    {smtpDelivered ? 'Código enviado a tu correo:' : 'Código generado para tu cuenta:'}
+                  </p>
                   <p className="font-mono text-indigo-800 font-semibold break-all">{emailInput}</p>
-                  <p className="text-indigo-600 mt-1">Revisa tu bandeja de entrada o la carpeta de correo no deseado (spam).</p>
+                  <p className="text-indigo-600 mt-1">
+                    {smtpDelivered
+                      ? 'Revisa tu bandeja de entrada o la carpeta de correo no deseado (spam).'
+                      : 'El código OTP ha sido registrado de forma segura en la base de datos institucional.'}
+                  </p>
                 </div>
               </div>
+
+              {/* Banner de estado de entrega de correo */}
+              {smtpDelivered ? (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-950 flex items-start gap-3 shadow-xs">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-emerald-900 text-sm">
+                      ¡Correo enviado exitosamente!
+                    </p>
+                    <p className="text-emerald-800 mt-0.5">
+                      Revisa la bandeja de entrada de <strong className="font-mono">{emailInput}</strong> (y la carpeta de spam si no lo ves de inmediato).
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-950 space-y-2.5 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-bold text-amber-900 text-sm">
+                        Google rechazó el envío automático por SMTP
+                      </p>
+                      <p className="text-amber-800 mt-1 leading-relaxed">
+                        Google bloqueó la autenticación con la contraseña <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">perez_y_aldana26</code> porque <strong>Google no permite usar contraseñas habituales</strong> para enviar correos desde sistemas externos. Exige una <strong>Contraseña de Aplicación de 16 caracteres</strong>.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-amber-200 flex flex-wrap gap-2 items-center justify-between">
+                    <a
+                      href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emailInput)}&su=${encodeURIComponent('Código de restablecimiento RDMI')}&body=${encodeURIComponent(`Hola,\n\nTu código de verificación para RDMI es: ${devOtpCode}\n\nVigencia: 15 minutos.`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Abrir y enviarme el correo en Gmail Web</span>
+                    </a>
+
+                    <a
+                      href="https://myaccount.google.com/apppasswords"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 hover:underline"
+                    >
+                      <span>Crear contraseña de 16 caracteres de Google</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {/* Banner de código generado para agilizar validación */}
+              {devOtpCode && (
+                <div className="bg-purple-50/90 border border-purple-200 rounded-2xl p-3.5 text-xs text-purple-950 flex items-center justify-between gap-3 shadow-xs">
+                  <div>
+                    <div className="flex items-center gap-1.5 font-bold text-purple-900">
+                      <KeyRound className="w-3.5 h-3.5 text-purple-700" />
+                      <span>Código OTP generado:</span>
+                      <span className="font-mono font-black text-sm tracking-widest text-purple-800 bg-white px-2 py-0.5 rounded border border-purple-200">
+                        {devOtpCode}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-purple-700 mt-1 leading-tight">
+                      El código está activo en Firestore. Puedes pegarlo directamente para no esperar.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const digits = devOtpCode.split('').slice(0, 6);
+                      setOtpDigits(digits);
+                      otpInputRefs.current[5]?.focus();
+                    }}
+                    className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shrink-0 shadow-sm"
+                  >
+                    Pegar código
+                  </button>
+                </div>
+              )}
 
               {/* Indicador de Expiración (10 minutos) */}
               <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-100 border border-slate-200">
