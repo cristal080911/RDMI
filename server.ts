@@ -9,6 +9,7 @@ import {
   sendPasswordChangedEmail,
   generatePasswordResetEmailHtml,
   sendVerificationCodeEmail,
+  verifySmtpConnection,
   DEFAULT_ADMIN_EMAIL
 } from './server/mailer';
 import {
@@ -604,74 +605,99 @@ async function startServer() {
   //   y una fecha de expiración de 10 minutos. Guarda este código y expiración en la
   //   base de datos asociado al usuario, y envía el correo mediante Nodemailer.
   app.post('/api/auth/solicitar-codigo', async (req, res) => {
-    const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Debe ingresar el correo electrónico.' });
-    }
-
-    // 1. Normalización flexible (trim y toLowerCase)
-    const cleanEmail = String(email).trim().toLowerCase();
-    if (cleanEmail.includes(' ') || /\s/.test(cleanEmail)) {
-      return res.status(400).json({ error: 'El correo electrónico no puede contener espacios.' });
-    }
-
-    // 1 & 2. Búsqueda flexible insensible a mayúsculas/minúsculas en Firestore (colección 'users', campos 'email' / 'correo_electronico')
-    const user = await findUserByEmailInFirestore(cleanEmail, users);
-    if (!user) {
-      return res.status(404).json({
-        error: 'El correo electrónico no está registrado'
-      });
-    }
-
-    // Generar código numérico aleatorio de 6 dígitos (OTP) y expiración de 15 minutos
-    const codigo = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresInMinutes = 15;
-    const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
-
-    // Guardar en la base de datos Firestore y sincronizar en memoria asociado al usuario
-    await saveUserOtpInFirestore(user.id, codigo, expiresAt, users);
-
-    // Enviar el correo electrónico mediante Nodemailer con la plantilla requerida
-    let mailResult;
     try {
-      mailResult = await sendVerificationCodeEmail({
-        toEmail: user.email,
-        recipientName: user.name,
-        code: codigo,
-        expiresInMinutes
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: 'Debe ingresar el correo electrónico.' });
+      }
+
+      // 1. Normalización flexible (trim y toLowerCase)
+      const cleanEmail = String(email).trim().toLowerCase();
+      if (cleanEmail.includes(' ') || /\s/.test(cleanEmail)) {
+        return res.status(400).json({ error: 'El correo electrónico no puede contener espacios.' });
+      }
+
+      // 1 & 2. Búsqueda flexible insensible a mayúsculas/minúsculas en Firestore (colección 'users', campos 'email' / 'correo_electronico')
+      const user = await findUserByEmailInFirestore(cleanEmail, users);
+      if (!user) {
+        return res.status(404).json({
+          error: `El correo "${cleanEmail}" no está registrado en el sistema institucional.`
+        });
+      }
+
+      const targetEmail = user.email || cleanEmail;
+
+      // Generar código numérico aleatorio de 6 dígitos (OTP) y expiración de 15 minutos
+      const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresInMinutes = 15;
+      const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
+
+      // Guardar en la base de datos Firestore y sincronizar en memoria asociado al usuario
+      await saveUserOtpInFirestore(user.id, codigo, expiresAt, users);
+
+      // Enviar el correo electrónico mediante Nodemailer con la plantilla requerida
+      let mailResult;
+      try {
+        mailResult = await sendVerificationCodeEmail({
+          toEmail: targetEmail,
+          recipientName: user.name || user.username || 'Usuario Institucional',
+          code: codigo,
+          expiresInMinutes
+        });
+      } catch (err: any) {
+        mailResult = {
+          success: false,
+          message: err?.message || 'Error al conectar con servidor SMTP',
+          error: err?.message,
+          sentTo: targetEmail,
+          smtpConfigured: false
+        };
+      }
+
+      if (!mailResult.success) {
+        console.log(`ℹ️ [SOLICITAR-CODIGO] Aviso SMTP para ${targetEmail}: ${mailResult.message}. El código ${codigo} quedó activo en Firestore.`);
+      }
+
+      const reqHost = req.get('host') || 'localhost:3000';
+      const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+      const origin = process.env.APP_URL || `${protocol}://${reqHost}`;
+      const resetLink = `${origin}/?token=${codigo}&email=${encodeURIComponent(targetEmail)}#reset-password`;
+
+      return res.json({
+        success: true,
+        message: mailResult.success
+          ? 'Código de verificación enviado al correo electrónico.'
+          : 'Código de verificación generado y activo en la base de datos.',
+        email: targetEmail,
+        expiresInMinutes,
+        codigo,
+        resetLink,
+        smtpConfigured: mailResult.smtpConfigured,
+        smtpDelivered: mailResult.success,
+        smtpNotice: mailResult.success ? undefined : mailResult.message
       });
     } catch (err: any) {
-      mailResult = {
+      console.error('❌ [SOLICITAR-CODIGO] Error general inesperado:', err);
+      return res.status(500).json({
+        error: 'Error al procesar la solicitud de recuperación de contraseña.',
+        details: err?.message || String(err)
+      });
+    }
+  });
+
+  // Endpoint de diagnóstico seguro para comprobar la conectividad y autenticación SMTP con Gmail
+  app.get('/api/auth/test-smtp', async (req, res) => {
+    try {
+      const result = await verifySmtpConnection();
+      const status = result.success ? 200 : 502;
+      return res.status(status).json(result);
+    } catch (err: any) {
+      return res.status(500).json({
         success: false,
-        message: err?.message || 'Error al conectar con servidor SMTP',
-        error: err?.message,
-        sentTo: user.email,
-        smtpConfigured: false
-      };
+        message: 'Error al verificar conexión SMTP',
+        error: err?.message || String(err)
+      });
     }
-
-    if (!mailResult.success) {
-      console.warn(`⚠️ [SOLICITAR-CODIGO] Aviso SMTP al despachar correo a ${user.email}: ${mailResult.message}. El código ${codigo} quedó activo en Firestore.`);
-    }
-
-    const reqHost = req.get('host') || 'localhost:3000';
-    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
-    const origin = process.env.APP_URL || `${protocol}://${reqHost}`;
-    const resetLink = `${origin}/?token=${codigo}&email=${encodeURIComponent(user.email)}#reset-password`;
-
-    res.json({
-      success: true,
-      message: mailResult.success
-        ? 'Código de verificación enviado al correo electrónico.'
-        : 'Código de verificación generado y activo en la base de datos.',
-      email: user.email,
-      expiresInMinutes,
-      codigo,
-      resetLink,
-      smtpConfigured: mailResult.smtpConfigured,
-      smtpDelivered: mailResult.success,
-      smtpNotice: mailResult.success ? undefined : mailResult.message
-    });
   });
 
   // Ruta complementaria para compatibilidad de recuperación RDMI

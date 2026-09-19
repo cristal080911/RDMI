@@ -531,6 +531,28 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
                     className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-purple-600 transition-all font-medium placeholder:text-slate-400 shadow-sm"
                   />
                 </div>
+
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                  <span className="font-semibold text-slate-600">Cuentas registradas:</span>
+                  {[
+                    { label: 'cristalpulecio@gmail.com', value: 'cristalpulecio@gmail.com' },
+                    { label: 'nicoleespinosa464@gmail.com', value: 'nicoleespinosa464@gmail.com' },
+                    { label: 'waespinosa2017@gmail.com', value: 'waespinosa2017@gmail.com' },
+                    { label: 'rectoria', value: 'rectoria' }
+                  ].map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      onClick={() => {
+                        setEmailInput(item.value);
+                        setError(null);
+                      }}
+                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-purple-100 hover:text-purple-800 text-[11px] font-mono border border-slate-200 transition-colors cursor-pointer"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="pt-2">
@@ -601,39 +623,17 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
                   </div>
                 </div>
               ) : (
-                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-950 space-y-2.5 shadow-xs">
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-950 space-y-2 shadow-xs">
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <p className="font-bold text-amber-900 text-sm">
-                        Google rechazó el envío automático por SMTP
+                        Aviso del servicio de despacho SMTP
                       </p>
                       <p className="text-amber-800 mt-1 leading-relaxed">
-                        Google bloqueó la autenticación con la contraseña <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">perez_y_aldana26</code> porque <strong>Google no permite usar contraseñas habituales</strong> para enviar correos desde sistemas externos. Exige una <strong>Contraseña de Aplicación de 16 caracteres</strong>.
+                        {smtpNotice || 'El código fue generado y resguardado exitosamente en Firestore, pero el servidor Gmail SMTP no completó el envío. Asegúrese de haber configurado una Contraseña de Aplicación de 16 caracteres de Google en EMAIL_PASS (.env).'}
                       </p>
                     </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-amber-200 flex flex-wrap gap-2 items-center justify-between">
-                    <a
-                      href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emailInput)}&su=${encodeURIComponent('Código de restablecimiento RDMI')}&body=${encodeURIComponent(`Hola,\n\nTu código de verificación para RDMI es: ${devOtpCode}\n\nVigencia: 15 minutos.`)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Abrir y enviarme el correo en Gmail Web</span>
-                    </a>
-
-                    <a
-                      href="https://myaccount.google.com/apppasswords"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 hover:underline"
-                    >
-                      <span>Crear contraseña de 16 caracteres de Google</span>
-                      <ArrowRight className="w-3 h-3" />
-                    </a>
                   </div>
                 </div>
               )}

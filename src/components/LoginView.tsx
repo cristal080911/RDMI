@@ -1262,32 +1262,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
                         <div className="flex items-start gap-2">
                           <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                           <div>
-                            <p className="font-bold text-amber-950">Aviso del servidor de correo Gmail</p>
+                            <p className="font-bold text-amber-950">Aviso del servidor de correo institucional</p>
                             <p className="text-[11px] text-amber-900 leading-relaxed">
-                              Google requiere una contraseña de aplicación de 16 caracteres para enviar correos directamente por SMTP. ¡Sin embargo, el código está activo y puedes mandar el correo con 1 clic!
+                              {recoverSmtpNotice || 'El código de 6 dígitos ha sido generado y registrado de forma segura en Firestore. No se pudo completar el despacho por Gmail SMTP (verifique que EMAIL_PASS en .env corresponda a una Contraseña de Aplicación de 16 caracteres de Google).'}
                             </p>
                           </div>
-                        </div>
-
-                        {/* Botones para mandar el correo en 1 clic */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                          <a
-                            href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recoverEmail)}&su=${encodeURIComponent('Código de Recuperación RDMI: ' + (recoverDevOtp || ''))}&body=${encodeURIComponent('Tu código de recuperación de contraseña para el Sistema RDMI es: ' + (recoverDevOtp || '') + '\n\nTiene una validez de 15 minutos.')}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-2 rounded-xl bg-white border border-amber-300 text-amber-950 hover:bg-amber-100/60 font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-xs transition-colors"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5 text-amber-700" />
-                            <span>Mandar correo en Gmail Web</span>
-                          </a>
-
-                          <a
-                            href={`mailto:${recoverEmail}?subject=${encodeURIComponent('Código de Recuperación RDMI')}&body=${encodeURIComponent('Tu código de recuperación de contraseña es: ' + (recoverDevOtp || '') + ' (válido por 15 minutos).')}`}
-                            className="p-2 rounded-xl bg-white border border-amber-300 text-amber-950 hover:bg-amber-100/60 font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-xs transition-colors"
-                          >
-                            <Mail className="w-3.5 h-3.5 text-amber-700" />
-                            <span>Abrir en mi app de correo</span>
-                          </a>
                         </div>
 
                         {/* Mostrar código activo con botón de pegar */}

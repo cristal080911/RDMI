@@ -407,10 +407,26 @@ export class ApiClient {
         body: JSON.stringify({ email: cleanEmail })
       });
 
-      const data = await resp.json().catch(() => ({}));
+      let data: any = {};
+      try {
+        data = await resp.json();
+      } catch {
+        data = {};
+      }
 
       if (!resp.ok) {
-        const errorMsg = data.error || data.detail || 'Error al solicitar el código de verificación.';
+        let errorMsg = data.error || data.detail || data.message;
+        if (!errorMsg) {
+          if (resp.status === 404) {
+            errorMsg = `El correo "${cleanEmail}" no está registrado en el sistema institucional.`;
+          } else if (resp.status === 504 || resp.status === 408) {
+            errorMsg = 'Tiempo de espera agotado al conectar con el servidor de correo. Intente de nuevo.';
+          } else if (resp.status === 500) {
+            errorMsg = 'Error interno en el servidor institucional al procesar la solicitud.';
+          } else {
+            errorMsg = `Error del servidor (${resp.status}): no se pudo procesar la solicitud del código.`;
+          }
+        }
         console.error('❌ [API CLIENT] Error devuelto por el servidor:', errorMsg);
         throw new Error(errorMsg);
       }

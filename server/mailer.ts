@@ -11,50 +11,192 @@ export interface EmailOptions {
   sentAt?: string;
 }
 
-// Nodemailer transporter initialization
-let transporter: Transporter | null = null;
+export interface MailConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  fromAddress: string;
+}
 
-// Correo por defecto del administrador de la plataforma RDMI (dinámico desde EMAIL_USER o fallback institucional)
+// Correo por defecto del administrador de la plataforma RDMI (dinámico desde EMAIL_USER)
 export const DEFAULT_ADMIN_EMAIL = (process.env.EMAIL_USER || 'cristalpulecio@gmail.com').trim();
 
+// Nodemailer transporter initialization
+let transporter: Transporter | null = null;
 let cachedUser = '';
 let cachedPass = '';
+let cachedHost = '';
+let cachedPort = 0;
 
-export function getMailTransporter(): { transporter: Transporter | null; error?: string } {
-  const user = (process.env.EMAIL_USER || DEFAULT_ADMIN_EMAIL).trim();
-  const pass = process.env.EMAIL_PASS ? process.env.EMAIL_PASS.trim() : '';
+/**
+ * Lee y sanitiza las credenciales exclusivamente desde variables de entorno (.env).
+ * Soporta puerto 465 (SSL directo) y 587 (STARTTLS).
+ * Limpia espacios internos de EMAIL_PASS para admitir tanto 'abcdefghijklmnop' como 'abcd efgh ijkl mnop'.
+ * NUNCA expone EMAIL_PASS en logs ni en mensajes hacia el cliente.
+ */
+export function getMailConfig(): { config: MailConfig | null; error?: string } {
   const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
   const port = Number(process.env.SMTP_PORT) || 465;
+  const secure = process.env.SMTP_SECURE !== undefined
+    ? (process.env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === '1')
+    : (port === 465);
 
-  const isPlaceholderPass = !pass || pass.includes('tu_contrase') || pass.includes('placeholder') || pass === 'password';
+  const rawUser = (process.env.EMAIL_USER || process.env.SMTP_USER || '').trim();
+  const user = rawUser.replace(/^["']|["']$/g, '').trim();
 
-  if (!user || isPlaceholderPass) {
-    transporter = null;
-    const missing = !user
-      ? 'Falta la variable EMAIL_USER en el entorno.'
-      : 'La variable EMAIL_PASS contiene un marcador de posición de ejemplo ("tu_contraseña_de_aplicacion_aqui"). Para despachar correos reales a bandejas de entrada, configure su Contraseña de Aplicación de 16 caracteres de Google en .env.';
-    return { transporter: null, error: missing };
+  const rawPass = (process.env.EMAIL_PASS || process.env.SMTP_PASS || '').trim();
+  // Sanitizar la Contraseña de Aplicación de Google: eliminar comillas y todos los espacios
+  const pass = rawPass.replace(/^["']|["']$/g, '').replace(/\s+/g, '');
+
+  if (!user) {
+    return {
+      config: null,
+      error: 'Falta la variable EMAIL_USER en el archivo .env. Ingrese su correo emisor de Gmail (ej: cristalpulecio@gmail.com).'
+    };
   }
 
-  if (!transporter || cachedUser !== user || cachedPass !== pass) {
-    cachedUser = user;
-    cachedPass = pass;
-    console.log(`🔌 [NODEMAILER] Configurando transporter SMTP: host=${host}, port=${port}, secure=${port === 465}, user=${user}`);
+  const isPlaceholder = !pass || pass.includes('tu_contrase') || pass.includes('placeholder') || pass === 'password';
+  if (isPlaceholder) {
+    return {
+      config: null,
+      error: 'Falta configurar EMAIL_PASS en el archivo .env con una Contraseña de Aplicación de 16 caracteres de Google (obtenida en https://myaccount.google.com/apppasswords).'
+    };
+  }
+
+  // Si el servidor es Gmail, verificar estrictamente que sea una Contraseña de Aplicación de 16 letras
+  // para evitar reintentos fallidos contra smtp.gmail.com con contraseñas personales o incompletas
+  const isGmail = host.toLowerCase().includes('gmail.com');
+  const is16LetterAppPass = /^[a-zA-Z]{16}$/.test(pass);
+  if (isGmail && !is16LetterAppPass) {
+    return {
+      config: null,
+      error: 'Google SMTP requiere obligatoriamente una Contraseña de Aplicación de 16 caracteres (creada en https://myaccount.google.com/apppasswords). La contraseña en EMAIL_PASS no corresponde a una contraseña de aplicación de 16 letras y Google la rechazará con 535 Bad Credentials.'
+    };
+  }
+
+  const fromAddress = `"RDMI" <${user}>`;
+  return {
+    config: { host, port, secure, user, pass, fromAddress }
+  };
+}
+
+export function getMailTransporter(): { transporter: Transporter | null; config: MailConfig | null; error?: string } {
+  const { config, error } = getMailConfig();
+  if (!config) {
+    transporter = null;
+    return { transporter: null, config: null, error };
+  }
+
+  if (
+    !transporter ||
+    cachedUser !== config.user ||
+    cachedPass !== config.pass ||
+    cachedHost !== config.host ||
+    cachedPort !== config.port
+  ) {
+    cachedUser = config.user;
+    cachedPass = config.pass;
+    cachedHost = config.host;
+    cachedPort = config.port;
+
+    console.log(`🔌 [NODEMAILER] Configurando transporte SMTP: host=${config.host}, port=${config.port}, secure=${config.secure}, user=${config.user}, passConfigured=true (${config.pass.length} caracteres)`);
+
     transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465, // true para puerto 465 (SSL/TLS)
+      host: config.host,
+      port: config.port,
+      secure: config.secure, // true para 465 (SSL), false para 587 (STARTTLS)
       auth: {
-        user,
-        pass
+        user: config.user,
+        pass: config.pass
       },
       tls: {
         rejectUnauthorized: false
-      }
+      },
+      connectionTimeout: 4000, // Timeout estricto de conexión inicial (4s)
+      greetingTimeout: 4000,   // Timeout de saludo SMTP (4s)
+      socketTimeout: 4500      // Timeout de inactividad de socket (4.5s)
     });
   }
 
-  return { transporter };
+  return { transporter, config };
+}
+
+/**
+ * Verifica el estado de la conexión y autenticación con el servidor SMTP de Gmail.
+ * Útil para pruebas diagnósticas y validación de variables de entorno sin exponer contraseñas.
+ */
+export async function verifySmtpConnection(): Promise<{
+  success: boolean;
+  message: string;
+  host: string;
+  port: number;
+  user: string;
+  secure: boolean;
+  error?: string;
+}> {
+  const { transporter: client, config, error: configError } = getMailTransporter();
+  const host = config?.host || process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = config?.port || Number(process.env.SMTP_PORT) || 465;
+  const user = config?.user || process.env.EMAIL_USER || '';
+  const secure = config?.secure ?? (port === 465);
+
+  if (!client || !config) {
+    return {
+      success: false,
+      message: configError || 'Credenciales SMTP no configuradas en el archivo .env.',
+      host,
+      port,
+      user,
+      secure,
+      error: configError
+    };
+  }
+
+  try {
+    const verifyPromise = client.verify();
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        const err: any = new Error('ETIMEDOUT: Tiempo de espera agotado (4s) al verificar conexión con el servidor SMTP');
+        err.code = 'ETIMEDOUT';
+        reject(err);
+      }, 4000);
+    });
+
+    await Promise.race([verifyPromise, timeoutPromise]);
+
+    console.log(`✅ [NODEMAILER VERIFY SUCCESS] Conexión y autenticación SMTP con Gmail verificadas correctamente para ${user}.`);
+    return {
+      success: true,
+      message: 'Conexión y autenticación SMTP con Google Gmail verificadas exitosamente.',
+      host,
+      port,
+      user,
+      secure
+    };
+  } catch (err: any) {
+    console.warn('⚠️ [NODEMAILER VERIFY] Verificación SMTP con Gmail no completada:', err?.message || err);
+    let friendly = 'Error de conexión con el servidor de correo.';
+
+    if (err?.code === 'EAUTH' || (err?.response && String(err.response).includes('535'))) {
+      friendly = 'Error de autenticación SMTP (535 Bad Credentials): Google rechazó las credenciales. Asegúrese de utilizar una Contraseña de Aplicación de 16 caracteres de Google (creada en https://myaccount.google.com/apppasswords) en EMAIL_PASS, NO la contraseña personal de Gmail.';
+    } else if (err?.code === 'ETIMEDOUT' || err?.code === 'ESOCKET' || err?.message?.includes('ETIMEDOUT')) {
+      friendly = `Tiempo de espera agotado (4s) al conectar con ${host}:${port}. Verifique la conectividad de red o la configuración del puerto.`;
+    } else {
+      friendly = `Error al conectar con servidor SMTP (${err?.code || 'ERR'}): ${err?.message || 'Error de socket'}`;
+    }
+
+    return {
+      success: false,
+      message: friendly,
+      host,
+      port,
+      user,
+      secure,
+      error: friendly
+    };
+  }
 }
 
 /**
@@ -230,9 +372,7 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
   const { toEmail } = options;
   const { subject, html, text } = generatePasswordResetEmailHtml(options);
 
-  const { transporter: client, error: configError } = getMailTransporter();
-  const user = (process.env.EMAIL_USER || DEFAULT_ADMIN_EMAIL).trim();
-  const fromAddress = `"RDMI" <${user}>`;
+  const { transporter: client, config, error: configError } = getMailTransporter();
 
   console.log(`\n======================================================`);
   console.log(`📧 [NODEMAILER DISPATCH: RECUPERACIÓN DE CONTRASEÑA]`);
@@ -241,11 +381,12 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
   console.log(`🔢 OTP: ${options.otp}`);
   console.log(`🌐 Enlace: ${options.resetLink}`);
   console.log(`⏳ Validez: ${options.expiresInMinutes || 15} minutos`);
-  console.log(`⚙️ SMTP Configurado: ${Boolean(client)} (Usuario: ${user || 'No configurado en .env'})`);
+  console.log(`⚙️ SMTP Servidor: ${config?.host || 'No configurado'}:${config?.port || 0}`);
+  console.log(`👤 Usuario emisor: ${config?.user || 'No configurado'}`);
   console.log(`======================================================\n`);
 
-  if (!client) {
-    const errorMsg = configError || 'Credenciales de correo no configuradas en el entorno (EMAIL_USER / EMAIL_PASS no definidos en .env). No se simula el envío.';
+  if (!client || !config) {
+    const errorMsg = configError || 'Credenciales SMTP no configuradas en el archivo .env (EMAIL_USER / EMAIL_PASS).';
     console.error(`❌ [NODEMAILER ERROR] ${errorMsg}`);
     return {
       success: false,
@@ -257,15 +398,25 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
   }
 
   try {
-    const info = await client.sendMail({
-      from: fromAddress,
+    const sendPromise = client.sendMail({
+      from: config.fromAddress,
       to: toEmail,
       subject: 'Restablece tu contraseña | RDMI',
       text,
       html
     });
 
-    console.log(`✅ [NODEMAILER SUCCESS] Mensaje entregado con ID: ${info.messageId}`);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        const err: any = new Error('ETIMEDOUT: Tiempo de espera agotado (4s) al enviar correo por SMTP');
+        err.code = 'ETIMEDOUT';
+        reject(err);
+      }, 4200);
+    });
+
+    const info: any = await Promise.race([sendPromise, timeoutPromise]);
+
+    console.log(`✅ [NODEMAILER SUCCESS] Mensaje entregado exitosamente con ID: ${info.messageId}`);
     return {
       success: true,
       message: 'Correo de recuperación enviado con éxito a través del servidor SMTP/Gmail.',
@@ -273,10 +424,12 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
       smtpConfigured: true
     };
   } catch (err: any) {
-    console.error(`❌ [NODEMAILER ERROR] Fallo al enviar correo SMTP:`, err?.message || err);
+    console.warn(`⚠️ [NODEMAILER NOTICE] No se pudo enviar el correo de recuperación SMTP a ${toEmail}:`, err?.message || err);
     let errorDetail = err?.message || 'Error de conexión SMTP';
     if (err?.code === 'EAUTH' || (err?.response && String(err.response).includes('535'))) {
-      errorDetail = 'Error de autenticación SMTP: Usuario o contraseña de correo no válidos. En Gmail debe usarse una Contraseña de Aplicación.';
+      errorDetail = 'Error de autenticación SMTP (535 Bad Credentials): Google rechazó las credenciales. En Gmail debe usar una Contraseña de Aplicación de 16 caracteres (creada en https://myaccount.google.com/apppasswords) en EMAIL_PASS, NO la contraseña personal de Gmail.';
+    } else if (err?.code === 'ETIMEDOUT' || err?.code === 'ESOCKET' || err?.message?.includes('ETIMEDOUT')) {
+      errorDetail = `Tiempo de espera agotado (4s) al conectar con ${config.host}:${config.port}. Verifique la conectividad de red o intente nuevamente.`;
     }
     return {
       success: false,
@@ -289,7 +442,7 @@ export async function sendPasswordResetEmail(options: EmailOptions): Promise<{
 }
 
 /**
- * Envia el correo con el código numérico de 6 dígitos (OTP) válido por 10 minutos
+ * Envia el correo con el código numérico de 6 dígitos (OTP) válido por 15 minutos
  * según requerimiento específico de recuperación de contraseña por Gmail / SMTP.
  */
 export async function sendVerificationCodeEmail(options: {
@@ -305,24 +458,21 @@ export async function sendVerificationCodeEmail(options: {
   error?: string;
 }> {
   const { toEmail, recipientName, code, expiresInMinutes = 15 } = options;
-  const user = (process.env.EMAIL_USER || DEFAULT_ADMIN_EMAIL).trim();
-  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
-  const port = Number(process.env.SMTP_PORT) || 465;
+
+  const { transporter: client, config, error: configError } = getMailTransporter();
 
   console.log(`\n======================================================`);
-  console.log(`📧 [INTENTO DE ENVÍO DE CORREO REAL - RECUPERACIÓN RDMI]`);
+  console.log(`📧 [DESPACHO AUTOMÁTICO DE CÓDIGO OTP - GMAIL SMTP]`);
   console.log(`➡️ Para: ${toEmail}`);
   console.log(`🔢 Código OTP: ${code}`);
   console.log(`⏳ Validez: ${expiresInMinutes} minutos`);
-  console.log(`⚙️ Servidor SMTP: ${host}:${port} (SSL: ${port === 465})`);
-  console.log(`👤 Usuario emisor (EMAIL_USER): ${user || '⚠️ NO CONFIGURADO'}`);
-  console.log(`🔑 Contraseña (EMAIL_PASS): ${process.env.EMAIL_PASS ? 'Configurada' : '⚠️ NO CONFIGURADA'}`);
+  console.log(`⚙️ Servidor SMTP: ${config?.host || 'smtp.gmail.com'}:${config?.port || 465} (SSL: ${config?.secure ?? true})`);
+  console.log(`👤 Usuario emisor: ${config?.user || '⚠️ NO CONFIGURADO'}`);
+  console.log(`🔑 Contraseña de Aplicación: ${config ? 'Configurada y sanitizada' : '⚠️ NO CONFIGURADA'}`);
   console.log(`======================================================\n`);
 
-  const { transporter: client, error: configError } = getMailTransporter();
-
-  if (!client) {
-    const errorMsg = configError || 'Credenciales de correo no configuradas en el entorno (.env). Configure EMAIL_USER y EMAIL_PASS para enviar correos reales.';
+  if (!client || !config) {
+    const errorMsg = configError || 'Credenciales de correo no configuradas en el archivo .env. Configure EMAIL_USER y EMAIL_PASS con su Contraseña de Aplicación de 16 caracteres de Google.';
     console.warn(`⚠️ [AVISO SMTP] ${errorMsg}`);
     return {
       success: false,
@@ -333,8 +483,8 @@ export async function sendVerificationCodeEmail(options: {
     };
   }
 
-  // Remitente exacto requerido: "RDMI" <tu_correo@gmail.com>
-  const fromAddress = `"RDMI" <${user}>`;
+  // Remitente exacto institucional: "RDMI" <correo@gmail.com>
+  const fromAddress = config.fromAddress;
 
   // Asunto exacto requerido: "Restablece tu contraseña | RDMI"
   const subject = 'Restablece tu contraseña | RDMI';
@@ -405,13 +555,23 @@ export async function sendVerificationCodeEmail(options: {
   `.trim();
 
   try {
-    const info = await client.sendMail({
+    const sendPromise = client.sendMail({
       from: fromAddress,
       to: toEmail,
       subject,
       text,
       html
     });
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        const err: any = new Error('ETIMEDOUT: Tiempo de espera agotado (4s) al conectar con el servidor SMTP');
+        err.code = 'ETIMEDOUT';
+        reject(err);
+      }, 4200);
+    });
+
+    const info: any = await Promise.race([sendPromise, timeoutPromise]);
 
     console.log(`✅ [NODEMAILER SUCCESS] Código de verificación entregado exitosamente a ${toEmail}. MessageId: ${info.messageId}`);
     return {
@@ -421,13 +581,13 @@ export async function sendVerificationCodeEmail(options: {
       smtpConfigured: true
     };
   } catch (err: any) {
-    console.error(`❌ [NODEMAILER ERROR REAL] Error al despachar correo a ${toEmail}:`, err);
+    console.warn(`⚠️ [NODEMAILER NOTICE] No se pudo enviar el código de verificación SMTP a ${toEmail}:`, err?.message || err);
     let friendlyError = err?.message || 'Error de conexión con el servidor SMTP';
 
     if (err?.code === 'EAUTH' || (err?.response && String(err.response).includes('535'))) {
-      friendlyError = 'Error de autenticación SMTP: Las credenciales de Gmail (EMAIL_USER / EMAIL_PASS) no son válidas. Asegúrese de generar una Contraseña de Aplicación de 16 dígitos en su cuenta de Google.';
+      friendlyError = 'Error de autenticación SMTP (535 Bad Credentials): Google rechazó las credenciales. Asegúrese de generar una Contraseña de Aplicación de 16 caracteres en su cuenta de Google (https://myaccount.google.com/apppasswords) y configurarla en EMAIL_PASS, no la contraseña personal de Gmail.';
     } else if (err?.code === 'ESOCKET' || err?.code === 'ETIMEDOUT') {
-      friendlyError = 'Error de conexión SMTP: Tiempo de espera agotado al conectar con el servidor Gmail SMTP en puerto 465.';
+      friendlyError = `Error de conexión SMTP: Tiempo de espera agotado (4s) al conectar con el servidor Gmail SMTP en ${config.host}:${config.port}.`;
     }
 
     return {
@@ -448,10 +608,13 @@ export async function sendPasswordChangedEmail(options: {
   recipientName: string;
   recipientUsername: string;
 }): Promise<void> {
-  const { transporter: client } = getMailTransporter();
-  const user = (process.env.EMAIL_USER || DEFAULT_ADMIN_EMAIL).trim();
-  const fromAddress = `"RDMI" <${user}>`;
+  const { transporter: client, config } = getMailTransporter();
+  if (!client || !config) {
+    console.warn(`⚠️ [CONFIRMATION EMAIL] No se envió confirmación: credenciales SMTP no configuradas.`);
+    return;
+  }
 
+  const fromAddress = config.fromAddress;
   const subject = `[Confirmación de Seguridad] Su contraseña institucional ha sido actualizada | RDMI`;
   const html = `
   <div style="font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px; background: #fff;">
@@ -465,18 +628,19 @@ export async function sendPasswordChangedEmail(options: {
   </div>
   `;
 
-  if (!client) {
-    console.warn(`⚠️ [CONFIRMATION EMAIL] No se envió confirmación: credenciales SMTP no configuradas.`);
-    return;
-  }
-
   try {
-    await client.sendMail({
+    const sendPromise = client.sendMail({
       from: fromAddress,
       to: options.toEmail,
       subject,
       html
     });
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('ETIMEDOUT')), 4000);
+    });
+
+    await Promise.race([sendPromise, timeoutPromise]);
   } catch (e) {
     console.warn('Error sending confirmation email:', e);
   }
