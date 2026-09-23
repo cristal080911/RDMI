@@ -61,18 +61,7 @@ export function getMailConfig(): { config: MailConfig | null; error?: string } {
   if (isPlaceholder) {
     return {
       config: null,
-      error: 'Falta configurar EMAIL_PASS en el archivo .env con una Contraseña de Aplicación de 16 caracteres de Google (obtenida en https://myaccount.google.com/apppasswords).'
-    };
-  }
-
-  // Si el servidor es Gmail, verificar estrictamente que sea una Contraseña de Aplicación de 16 letras
-  // para evitar reintentos fallidos contra smtp.gmail.com con contraseñas personales o incompletas
-  const isGmail = host.toLowerCase().includes('gmail.com');
-  const is16LetterAppPass = /^[a-zA-Z]{16}$/.test(pass);
-  if (isGmail && !is16LetterAppPass) {
-    return {
-      config: null,
-      error: 'Google SMTP requiere obligatoriamente una Contraseña de Aplicación de 16 caracteres (creada en https://myaccount.google.com/apppasswords). La contraseña en EMAIL_PASS no corresponde a una contraseña de aplicación de 16 letras y Google la rechazará con 535 Bad Credentials.'
+      error: 'Falta configurar EMAIL_PASS en el archivo .env con la contraseña de envío (o Contraseña de Aplicación de Google de 16 caracteres obtenida en https://myaccount.google.com/apppasswords).'
     };
   }
 
@@ -80,6 +69,19 @@ export function getMailConfig(): { config: MailConfig | null; error?: string } {
   return {
     config: { host, port, secure, user, pass, fromAddress }
   };
+}
+
+/**
+ * Verifica si existe una Contraseña de Aplicación válida de 16 caracteres para Gmail
+ * o un servidor SMTP estándar autenticado, para evitar errores 535 Bad Credentials innecesarios.
+ */
+export function hasDedicatedSmtpAppPassword(): boolean {
+  const { config } = getMailConfig();
+  if (!config) return false;
+  if (config.host.toLowerCase().includes('gmail.com')) {
+    return /^[a-zA-Z]{16}$/.test(config.pass);
+  }
+  return true;
 }
 
 export function getMailTransporter(): { transporter: Transporter | null; config: MailConfig | null; error?: string } {

@@ -527,32 +527,13 @@ export const PasswordManagementModal: React.FC<PasswordManagementModalProps> = (
                     onBlur={(e) => {
                       setEmailInput(e.target.value.trim().toLowerCase());
                     }}
-                    placeholder="ej: funcionario@institucion.edu.co o tu usuario"
+                    placeholder="Ingresa cualquier correo electrónico (ej: usuario@gmail.com)"
                     className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-purple-600 transition-all font-medium placeholder:text-slate-400 shadow-sm"
                   />
                 </div>
-
-                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                  <span className="font-semibold text-slate-600">Cuentas registradas:</span>
-                  {[
-                    { label: 'cristalpulecio@gmail.com', value: 'cristalpulecio@gmail.com' },
-                    { label: 'nicoleespinosa464@gmail.com', value: 'nicoleespinosa464@gmail.com' },
-                    { label: 'waespinosa2017@gmail.com', value: 'waespinosa2017@gmail.com' },
-                    { label: 'rectoria', value: 'rectoria' }
-                  ].map((item) => (
-                    <button
-                      key={item.value}
-                      type="button"
-                      onClick={() => {
-                        setEmailInput(item.value);
-                        setError(null);
-                      }}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-purple-100 hover:text-purple-800 text-[11px] font-mono border border-slate-200 transition-colors cursor-pointer"
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  El código de verificación se enviará a cualquier correo electrónico ingresado para restablecer la contraseña.
+                </p>
               </div>
 
               <div className="pt-2">

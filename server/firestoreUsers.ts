@@ -8,7 +8,8 @@ import {
   getDocs,
   doc,
   getDoc,
-  updateDoc
+  updateDoc,
+  setDoc
 } from 'firebase/firestore';
 
 export interface RegisteredUserSummary {
@@ -145,22 +146,33 @@ export async function findUserByEmailInFirestore(
 
 /**
  * Guarda el código OTP y su fecha de expiración en Firestore para el usuario.
+ * Utiliza setDoc con merge: true para crear el documento si el usuario aún no existe.
  */
 export async function saveUserOtpInFirestore(
   userId: string,
   otpCode: string,
   expiresAt: number,
-  memoryUsers: any[] = []
+  memoryUsers: any[] = [],
+  userInfo?: Partial<RegisteredUserSummary>
 ): Promise<boolean> {
   let updatedInFirestore = false;
   const db = getBackendFirestore();
   if (db && userId) {
     try {
       const userDocRef = doc(db, 'users', userId);
-      await updateDoc(userDocRef, {
+      const dataToSave: any = {
         resetPasswordOtp: otpCode,
-        resetPasswordExpires: expiresAt
-      });
+        resetPasswordExpires: expiresAt,
+        updatedAt: new Date().toISOString()
+      };
+      if (userInfo?.email) {
+        dataToSave.email = String(userInfo.email).trim().toLowerCase();
+        dataToSave.username = userInfo.username || String(userInfo.email).split('@')[0];
+        dataToSave.name = userInfo.name || 'Usuario Institucional';
+        dataToSave.status = userInfo.status || 'APPROVED';
+        dataToSave.role = userInfo.role || 'DOCENTE';
+      }
+      await setDoc(userDocRef, dataToSave, { merge: true });
       updatedInFirestore = true;
     } catch (err) {
       console.warn(`⚠️ No se pudo guardar OTP en Firestore doc users/${userId}:`, err);
@@ -168,10 +180,11 @@ export async function saveUserOtpInFirestore(
   }
 
   // Sincronizar también en la lista de memoria
-  const mem = memoryUsers.find(u => u.id === userId);
+  const mem = memoryUsers.find(u => u.id === userId || (userInfo?.email && String(u.email || '').toLowerCase() === String(userInfo.email).toLowerCase()));
   if (mem) {
     mem.resetPasswordOtp = otpCode;
     mem.resetPasswordExpires = expiresAt;
+    if (userInfo?.email) mem.email = String(userInfo.email).toLowerCase();
   }
 
   return updatedInFirestore;
@@ -314,14 +327,14 @@ export async function updateUserPasswordInFirestore(
   if (db && userId) {
     try {
       const userDocRef = doc(db, 'users', userId);
-      await updateDoc(userDocRef, {
+      await setDoc(userDocRef, {
         password: plainPassword,
         passwordHash: hashedPassword || plainPassword,
         resetPasswordOtp: null,
         resetPasswordExpires: null,
         resetPasswordToken: null,
         updatedAt: new Date().toISOString()
-      });
+      }, { merge: true });
       updatedInFirestore = true;
     } catch (err) {
       console.warn(`⚠️ No se pudo actualizar contraseña en Firestore doc users/${userId}:`, err);

@@ -911,12 +911,39 @@ export class FirebaseDatabaseService {
     }
 
     const users = await this.getUsers();
-    const found = users.find(
+    let found = users.find(
       u => u.email.toLowerCase() === cleanEmail || (u as any).correo_electronico?.toLowerCase() === cleanEmail
     );
 
     if (!found) {
-      throw new Error('El correo electrónico no está registrado.');
+      try {
+        const usersCol = collection(db, 'users');
+        const snap = await getDocs(usersCol);
+        for (const docSnap of snap.docs) {
+          const d = docSnap.data();
+          const emailCandidate = String(d.email || d.correo_electronico || d.correo || '').trim().toLowerCase();
+          if (emailCandidate === cleanEmail) {
+            found = {
+              id: docSnap.id,
+              username: d.username || cleanEmail.split('@')[0],
+              email: emailCandidate,
+              name: d.name || 'Usuario Institucional',
+              role: d.role || 'DOCENTE',
+              roleTitle: d.roleTitle || 'Personal Institucional',
+              department: d.department || 'General',
+              status: d.status || 'APPROVED',
+              createdAt: d.createdAt || new Date().toISOString()
+            } as any;
+            break;
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ Error consultando usuarios en Firestore:', e);
+      }
+    }
+
+    if (!found) {
+      throw new Error('No se encontró una solicitud activa de código para este correo. Solicite uno nuevo.');
     }
 
     const userDocRef = doc(db, 'users', found.id);
@@ -979,12 +1006,39 @@ export class FirebaseDatabaseService {
     }
 
     const users = await this.getUsers();
-    const found = users.find(
+    let found = users.find(
       u => u.email.toLowerCase() === cleanEmail || (u as any).correo_electronico?.toLowerCase() === cleanEmail
     );
 
     if (!found) {
-      throw new Error('El correo electrónico no está registrado.');
+      try {
+        const usersCol = collection(db, 'users');
+        const snap = await getDocs(usersCol);
+        for (const docSnap of snap.docs) {
+          const d = docSnap.data();
+          const emailCandidate = String(d.email || d.correo_electronico || d.correo || '').trim().toLowerCase();
+          if (emailCandidate === cleanEmail) {
+            found = {
+              id: docSnap.id,
+              username: d.username || cleanEmail.split('@')[0],
+              email: emailCandidate,
+              name: d.name || 'Usuario Institucional',
+              role: d.role || 'DOCENTE',
+              roleTitle: d.roleTitle || 'Personal Institucional',
+              department: d.department || 'General',
+              status: d.status || 'APPROVED',
+              createdAt: d.createdAt || new Date().toISOString()
+            } as any;
+            break;
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ Error consultando usuarios en Firestore:', e);
+      }
+    }
+
+    if (!found) {
+      throw new Error('El correo electrónico no tiene un proceso de recuperación activo.');
     }
 
     const userDocRef = doc(db, 'users', found.id);
@@ -1004,13 +1058,13 @@ export class FirebaseDatabaseService {
     }
 
     // Actualizar documento en Firebase Firestore
-    await updateDoc(userDocRef, {
+    await setDoc(userDocRef, {
       password: cleanPass,
       resetPasswordOtp: null,
       resetPasswordExpires: null,
       resetPasswordToken: null,
       updatedAt: new Date().toISOString()
-    });
+    }, { merge: true });
 
     const updatedUser = {
       ...found,
